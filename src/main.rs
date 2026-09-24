@@ -15,6 +15,7 @@ use actix_web::{App, HttpServer, web::Data};
 use anyhow::{Context as _, Result, ensure};
 use clap::{Parser, Subcommand};
 use tracing::level_filters::LevelFilter;
+use tracing_actix_web::TracingLogger;
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt as _, util::SubscriberInitExt as _};
 
 #[derive(Parser)]
@@ -57,7 +58,7 @@ async fn main() -> Result<()> {
         .init();
     let result = run_command().await;
     if let Err(error) = &result {
-        tracing::error!(error = %format!("{error:#}"), "command failed");
+        tracing::error!(error = %format!("{error:#}"), "Command failed");
     }
     result
 }
@@ -84,7 +85,7 @@ async fn run_command() -> Result<()> {
         sources = config.sources.len(),
         destinations = config.destinations.len(),
         routes = config.routes.len(),
-        "configuration loaded"
+        "Configuration loaded"
     );
     if let Some(parent) = std::path::Path::new(&config.database)
         .parent()
@@ -93,12 +94,12 @@ async fn run_command() -> Result<()> {
         std::fs::create_dir_all(parent).context("cannot create database directory")?;
     }
     let store = store::Store::open(&config.database).await?;
-    tracing::info!("database ready");
+    tracing::info!("Database ready");
     match args.command {
         Command::Failed => println!("{}", serde_json::to_string_pretty(&store.failed().await?)?),
         Command::Retry { id } => {
             ensure!(store.retry(id).await?, "no failed delivery with ID {id}");
-            tracing::info!(job_id = id, "failed delivery scheduled for retry");
+            tracing::info!(job_id = id, "Failed delivery scheduled for retry");
         }
         Command::Serve => serve(config, store.clone()).await?,
         Command::Preview { .. } => unreachable!(),
@@ -117,7 +118,7 @@ async fn serve(config: Arc<config::Config>, store: store::Store) -> Result<()> {
         .context("cannot open service lock file")?;
     lock.try_lock()
         .context("another server holds this database lock")?;
-    tracing::info!("database lock acquired");
+    tracing::info!("Database lock acquired");
 
     let health = worker::WorkerHealth(Arc::new(AtomicBool::new(false)));
     let (stop, receiver) = tokio::sync::watch::channel(false);
@@ -126,6 +127,7 @@ async fn serve(config: Arc<config::Config>, store: store::Store) -> Result<()> {
     let app_health = health.clone();
     let server = HttpServer::new(move || {
         App::new()
+            .wrap(TracingLogger::default())
             .app_data(Data::from(app_config.clone()))
             .app_data(Data::new(app_store.clone()))
             .app_data(Data::new(app_health.clone()))
@@ -144,7 +146,7 @@ async fn serve(config: Arc<config::Config>, store: store::Store) -> Result<()> {
     tokio::select! {
         signal = shutdown_signal() => {
             signal?;
-            tracing::info!("shutdown requested");
+            tracing::info!("Shutdown requested");
             stop.send_replace(true);
             handle.stop(true).await;
             http.await??;
@@ -155,7 +157,7 @@ async fn serve(config: Arc<config::Config>, store: store::Store) -> Result<()> {
             handle.stop(true).await;
             http.await??;
             result??;
-            tracing::error!("delivery worker stopped unexpectedly");
+            tracing::error!("Delivery worker stopped unexpectedly");
             anyhow::bail!("delivery worker stopped unexpectedly");
         },
         result = &mut http => {
@@ -165,7 +167,7 @@ async fn serve(config: Arc<config::Config>, store: store::Store) -> Result<()> {
             tracing::warn!("HTTP server stopped");
         },
     }
-    tracing::info!("service stopped");
+    tracing::info!("Service stopped");
     Ok(())
 }
 

@@ -5,14 +5,10 @@ COPY src ./src
 COPY examples ./examples
 RUN cargo build --release --locked
 
-FROM debian:bookworm-slim
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl \
-    && rm -rf /var/lib/apt/lists/* \
-    && groupadd --gid 10001 router \
-    && useradd --uid 10001 --gid router --no-create-home router \
+FROM bitnami/minideb:trixie
+RUN install_packages ca-certificates curl \
     && mkdir /data \
-    && chown router:router /data
+    && chown 10001:10001 /data
 COPY --from=builder /build/target/release/github-release-router /usr/local/bin/github-release-router
 USER 10001:10001
 WORKDIR /data

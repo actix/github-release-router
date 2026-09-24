@@ -130,8 +130,8 @@ pub async fn run(
     let result = run_inner(store, config, &mut shutdown, &health).await;
     health.0.store(false, Ordering::Relaxed);
     match &result {
-        Ok(()) => tracing::info!("delivery worker stopped"),
-        Err(error) => tracing::error!(error = %format!("{error:#}"), "delivery worker stopped"),
+        Ok(()) => tracing::info!("Delivery worker stopped"),
+        Err(error) => tracing::error!(error = %format!("{error:#}"), "Delivery worker stopped"),
     }
     result
 }
@@ -152,7 +152,7 @@ async fn run_inner(
         .await
         .context("cannot maintain delivery database")?;
     health.0.store(true, Ordering::Relaxed);
-    tracing::info!("delivery worker ready");
+    tracing::info!("Delivery worker ready");
     let mut last_maintenance = tokio::time::Instant::now();
     while !*shutdown.borrow() {
         if last_maintenance.elapsed() >= Duration::from_secs(3600) {
@@ -173,13 +173,13 @@ async fn run_inner(
                 repository = job.repository,
                 destination = job.destination,
                 attempt = job.attempts,
-                "claimed delivery"
+                "Claimed delivery"
             );
             let outcome = match config.destinations.get(&job.destination) {
                 Some(destination) => {
                     send(&client, &destination.url, &job.message, job.attempts)
                         .instrument(tracing::info_span!(
-                            "discord_attempt",
+                            "Discord attempt",
                             job_id = job.id,
                             destination = job.destination,
                             attempt = job.attempts
@@ -216,7 +216,7 @@ async fn run_inner(
                     attempt = job.attempts,
                     result = state,
                     reason,
-                    "delivery completed"
+                    "Delivery completed"
                 ),
                 "pending" => tracing::warn!(
                     job_id = job.id,
@@ -229,7 +229,7 @@ async fn run_inner(
                     reason,
                     retry_delay_seconds = delay,
                     rate_limited = limited,
-                    "delivery scheduled for retry"
+                    "Delivery scheduled for retry"
                 ),
                 _ => tracing::error!(
                     job_id = job.id,
@@ -240,7 +240,7 @@ async fn run_inner(
                     attempt = job.attempts,
                     result = state,
                     reason,
-                    "delivery failed"
+                    "Delivery failed"
                 ),
             }
         } else {

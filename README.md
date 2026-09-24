@@ -56,7 +56,7 @@ The renderer budgets 256 UTF-16 units each for title and repository and 4,096 fo
 
 - `GET /healthz`: 200 when HTTP is running; it does not check Discord or SQLite.
 - `GET /readyz`: 200 when the delivery worker is active and SQLite responds; otherwise 503. Discord failures do not take down readiness.
-- Tracing logs go to stderr as text with named fields and no application timestamp. The default level is `INFO`. Logs show startup, authentication rejections, webhook decisions, queue recovery, and delivery results. Retries include the attempt, reason, delay, and destination name. Set `RUST_LOG=github_release_router=debug` to include job claims, Discord response status codes, safe network error classes, database maintenance, and failed readiness checks. Logs exclude secrets, webhook URLs, request bodies, and raw HTTP client errors. Do not enable HTTP wire logging in production.
+- Tracing logs go to stderr as text with named fields and no application timestamp. The default level is `INFO`. HTTP handlers run in a request span that records the method, route, status, and request ID. Logs show startup, authentication rejections, webhook decisions, queue recovery, and delivery results. Retries include the attempt, reason, delay, and destination name. Set `RUST_LOG=github_release_router=debug` to include job claims, Discord response status codes, safe network error classes, database maintenance, and failed readiness checks. Logs exclude secrets, webhook URLs, request bodies, and raw HTTP client errors. Do not enable HTTP wire logging in production.
 - Monitor failed jobs, queue age, disk space, readiness, and GitHub's recent deliveries. No metrics service is required.
 
 ## Local development and preview

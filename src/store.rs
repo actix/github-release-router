@@ -57,7 +57,7 @@ impl Store {
             .await?;
         tracing::info!(
             jobs = recovered.rows_affected(),
-            "recovered interrupted deliveries"
+            "Recovered interrupted deliveries"
         );
         Ok(())
     }
@@ -146,7 +146,7 @@ impl Store {
         tracing::debug!(
             deliveries_removed = deliveries.rows_affected(),
             payloads_removed = payloads.rows_affected(),
-            "database maintenance completed"
+            "Database maintenance completed"
         );
         Ok(())
     }

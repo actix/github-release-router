@@ -23,14 +23,14 @@ impl RequestSignatureScheme for GithubSignature {
             .ok_or_else(|| error::ErrorInternalServerError("configuration unavailable"))?;
         let source_name = req.match_info().get("source").unwrap_or_default();
         let source = config.sources.get(source_name).ok_or_else(|| {
-            tracing::warn!(reason = "unknown_source", "webhook rejected");
+            tracing::warn!(reason = "unknown_source", "Webhook rejected");
             error::ErrorNotFound("unknown source")
         })?;
         if req.headers().contains_key("content-encoding") {
             tracing::warn!(
                 source = source_name,
                 reason = "content_encoding",
-                "webhook rejected"
+                "Webhook rejected"
             );
             return Err(error::ErrorUnsupportedMediaType(
                 "content encoding is not supported",
@@ -53,7 +53,7 @@ impl RequestSignatureScheme for GithubSignature {
                 tracing::warn!(
                     source = source_name,
                     reason = "missing_or_malformed_signature",
-                    "webhook rejected"
+                    "Webhook rejected"
                 );
                 error::ErrorUnauthorized("missing or malformed signature")
             })?;
@@ -72,7 +72,7 @@ impl RequestSignatureScheme for GithubSignature {
             tracing::warn!(
                 source = req.match_info().get("source").unwrap_or_default(),
                 reason = "invalid_signature",
-                "webhook rejected"
+                "Webhook rejected"
             );
             error::ErrorUnauthorized("invalid signature")
         })
