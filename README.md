@@ -50,7 +50,7 @@ Inspection returns IDs, repositories, routes, destination names, attempts, and s
 
 ## Messages and operations
 
-An embed shows repository, release name/tag, release URL, publication timestamp, and notes. Supported Markdown is retained. Empty notes have a fallback. All mention parsing is disabled. Notes longer than the description limit get an excerpt and a complete `release-notes.md` attachment in the same multipart message.
+An embed shows the release name as its linked title, plus the repository and notes. Discord displays the message time. The tag is used as the title only when GitHub provides no release name. Supported Markdown is retained. Empty notes have a fallback. All mention parsing is disabled. Notes longer than the description limit get an excerpt and a complete `release-notes.md` attachment in the same multipart message.
 
 The renderer budgets 256 UTF-16 units each for title and repository and 4,096 for description. Their sum stays below Discord's 6,000-character total embed limit. Unicode truncation preserves character boundaries. See [Discord embed limits](https://docs.discord.com/developers/resources/message#embed-limits) and [Execute Webhook](https://docs.discord.com/developers/resources/webhook#execute-webhook). The 2 MiB input limit also bounds the notes attachment.
 
@@ -78,6 +78,10 @@ just container-run
 For local execution, set `database = "data/router.sqlite"` and use local secret files or environment references. Preview emits JSON containing `payload` (the Discord message) and `notes` (the full attachment, when needed). Tests use temporary SQLite files and loopback fake Discord servers. They never post to Discord.
 
 Run `just container-smoke` after `just container-build` to check non-root startup, health, readiness, single-instance locking, queue persistence, restart deduplication, and SIGTERM shutdown. This script needs Docker, OpenSSL, the SQLite CLI, and ripgrep. It creates and removes its own container and volume. Its container has `--network none`, so no test can reach Discord.
+
+## Container publishing
+
+Pushing to `main` runs the [container workflow](.github/workflows/publish-container.yml). It builds the locked Dockerfile and publishes `ghcr.io/robjtede/github-release-router:latest` and a `sha-<commit>` tag. The workflow can also be started manually; `latest` is published only from the default branch. It uses the repository's `GITHUB_TOKEN` with package write permission. A new GHCR package is private by default, so make it public or grant your cluster image-pull access before deploying it.
 
 ## Kubernetes example
 

@@ -45,9 +45,9 @@ pub fn render(repository: &str, release: &Release) -> Message {
         .unwrap_or(&release.tag_name);
     let mut payload = json!({
         "allowed_mentions": {"parse": [], "users": [], "roles": [], "replied_user": false},
-        "embeds": [{"title": clip(&format!("{name} · {}", release.tag_name), 256),
+        "embeds": [{"title": clip(name, 256),
             "url": release.html_url, "description": description, "color": 0x5865F2,
-            "author": {"name": clip(repository, 256)}, "timestamp": release.published_at}]
+            "author": {"name": clip(repository, 256)} }]
     });
     if long {
         payload["attachments"] = json!([{"id": 0, "filename": "release-notes.md"}]);

@@ -18,7 +18,6 @@ pub struct Release {
     pub name: Option<String>,
     pub html_url: String,
     pub body: Option<String>,
-    pub published_at: chrono::DateTime<chrono::Utc>,
     pub prerelease: bool,
 }
 

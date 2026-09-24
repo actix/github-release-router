@@ -225,6 +225,21 @@ async fn routes_union_destinations_and_include_prereleases_per_route() {
 }
 
 #[actix_web::test]
+async fn embed_title_uses_only_the_release_name_and_links_to_the_release() {
+    let mut release: github::Release = serde_json::from_value(event()["release"].clone()).unwrap();
+
+    let message = discord::render("actix/actix-web", &release);
+    let embed = &message.payload["embeds"][0];
+    assert_eq!(embed["title"], "Actix Web 4.0.0");
+    assert_eq!(embed["url"], release.html_url);
+    assert!(embed.get("timestamp").is_none());
+
+    release.name = None;
+    let message = discord::render("actix/actix-web", &release);
+    assert_eq!(message.payload["embeds"][0]["title"], "web-v4.0.0");
+}
+
+#[actix_web::test]
 async fn unicode_notes_are_complete_and_embed_limits_hold() {
     let mut release: github::Release = serde_json::from_value(event()["release"].clone()).unwrap();
     for notes in [
