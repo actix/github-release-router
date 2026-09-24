@@ -59,7 +59,7 @@ post() {
 stop() {
     docker stop --time 45 "$name" >/dev/null
     test "$(docker inspect --format '{{.State.ExitCode}}' "$name")" = 0
-    docker logs "$name" 2>&1 | rg -q 'shutdown requested'
+    docker logs "$name" 2>&1 | rg -q 'Shutdown requested'
 }
 
 start
