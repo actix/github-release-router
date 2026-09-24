@@ -12,7 +12,7 @@ use std::{
 };
 
 use actix_web::{App, HttpServer, web::Data};
-use anyhow::{Context, Result, ensure};
+use anyhow::{Context as _, Result, ensure};
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]

@@ -1,8 +1,8 @@
-use std::{collections::BTreeMap, str::FromStr, time::Duration};
+use std::{collections::BTreeMap, str::FromStr as _, time::Duration};
 
 use anyhow::Result;
 use sqlx::{
-    Row, SqlitePool,
+    Row as _, SqlitePool,
     sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous},
 };
 

@@ -78,3 +78,22 @@ just container-run
 For local execution, set `database = "data/router.sqlite"` and use local secret files or environment references. Preview emits JSON containing `payload` (the Discord message) and `notes` (the full attachment, when needed). Tests use temporary SQLite files and loopback fake Discord servers. They never post to Discord.
 
 Run `just container-smoke` after `just container-build` to check non-root startup, health, readiness, single-instance locking, queue persistence, restart deduplication, and SIGTERM shutdown. This script needs Docker, OpenSSL, the SQLite CLI, and ripgrep. It creates and removes its own container and volume. Its container has `--network none`, so no test can reach Discord.
+
+## Kubernetes example
+
+The [`k8s/`](/Users/rob/Development/github-release-router/k8s/) directory contains example resources for a single-replica deployment. It uses a `ReadWriteOnce` PVC for SQLite, mounts the TOML configuration read-only, mounts credentials as files, runs as UID 10001, and exposes a ClusterIP service. `deployment.yaml` uses a placeholder image; replace it with the image published from your registry. `ingress.example.yaml` is an optional nginx example and must be adapted to the ingress controller and certificate manager in use.
+
+Create the Secret without committing credentials. For example, use `k8s/secret.example.yaml` as a template or generate it with `kubectl create secret generic`; do not apply the placeholder values. The example Secret is deliberately excluded from `kustomization.yaml`. Then apply the Secret and base resources:
+
+```sh
+kubectl apply -f k8s/namespace.yaml
+kubectl -n github-release-router create secret generic github-release-router-secrets \
+  --from-file=actix_github_secret \
+  --from-file=personal_github_secret \
+  --from-file=discord_webhook_url
+kubectl apply -k k8s/
+kubectl -n github-release-router rollout status deployment/github-release-router
+kubectl -n github-release-router port-forward service/github-release-router 8080:8080
+```
+
+Configure GitHub hooks against the HTTPS ingress URL, for example `https://releases.example.com/webhooks/github/actix`. Keep one pod and one writer for the PVC. Back up SQLite using the same guidance as Compose, and scale down before moving the PVC to another node or changing storage. `kubectl delete -k k8s/` removes the example resources but leaves the PVC data unless the storage class reclaim policy removes it; verify your cluster policy before deleting production resources.

@@ -3,7 +3,7 @@ use actix_web::{
     web::{Bytes, Data},
 };
 use actix_web_lab::extract::RequestSignatureScheme;
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit as _, Mac as _};
 use sha2::Sha256;
 
 use crate::config::Config;

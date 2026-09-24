@@ -1,0 +1,25 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: github-release-router
+  namespace: github-release-router
+  annotations:
+    # Set an equivalent annotation for the ingress controller in use.
+    nginx.ingress.kubernetes.io/proxy-body-size: 2m
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "40"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts: [releases.example.com]
+      secretName: releases-example-tls
+  rules:
+    - host: releases.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: github-release-router
+                port:
+                  name: http

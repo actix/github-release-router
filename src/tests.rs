@@ -4,12 +4,12 @@ use std::{
 };
 
 use actix_web::{
-    App, FromRequest, HttpResponse, HttpServer,
+    App, FromRequest as _, HttpResponse, HttpServer,
     dev::Payload,
     test,
     web::{self, Bytes, Data},
 };
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit as _, Mac as _};
 use serde_json::{Value, json};
 use sha2::Sha256;
 
