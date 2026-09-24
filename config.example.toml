@@ -1,0 +1,35 @@
+bind = "0.0.0.0:8080"
+database = "/data/router.sqlite"
+
+# A repository hook and an organization hook use the same endpoint format.
+# Configure each hook with the secret for its named source.
+[sources.actix]
+repositories = ["actix/actix-web"]
+secret = { file = "/run/secrets/actix_github_secret" }
+
+[sources.personal]
+repositories = ["robjtede/actix-web-lab"]
+secret = { file = "/run/secrets/personal_github_secret" }
+
+# This URL must belong to #web in server 771444961383153695.
+# The server/channel IDs are not API parameters for incoming webhook delivery.
+[destinations.web]
+webhook = { file = "/run/secrets/discord_webhook_url" }
+# Alternative: webhook = { env = "DISCORD_WEBHOOK_URL" }
+
+[[routes]]
+name = "actix-web"
+repository = "actix/actix-web"
+tag_prefix = "web-" # Optional. Remove this line to include all repository tags.
+include_prereleases = false
+destinations = ["web"]
+
+[[routes]]
+name = "actix-web-lab"
+repository = "robjtede/actix-web-lab"
+tag_prefix = "lab-" # Optional. Remove this line to include all repository tags.
+include_prereleases = false
+destinations = ["web"]
+
+# Add the other repository names to a source allowlist and add a route for each.
+# There is no two-repository limit; four or more use the same configuration.

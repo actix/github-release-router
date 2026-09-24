@@ -1,0 +1,30 @@
+services:
+  router:
+    build: .
+    image: github-release-router:local
+    restart: unless-stopped
+    init: true
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - router-data:/data
+      - ./config.toml:/etc/router/config.toml:ro
+    secrets:
+      - actix_github_secret
+      - personal_github_secret
+      - discord_webhook_url
+    stop_grace_period: 75s
+
+volumes:
+  router-data:
+
+secrets:
+  actix_github_secret:
+    file: ./secrets/actix_github_secret
+  personal_github_secret:
+    file: ./secrets/personal_github_secret
+  discord_webhook_url:
+    file: ./secrets/discord_webhook_url
