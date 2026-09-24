@@ -89,7 +89,14 @@ impl Config {
         let input = std::fs::read_to_string(path).context("cannot read configuration")?;
         // TOML diagnostics can contain input lines; do not echo possible credentials.
         let mut config: Self = toml::from_str(&input).map_err(|err: toml::de::Error| {
-            let line = err.span().map(|span| input[..span.start].bytes().filter(|b| *b == b'\n').count() + 1);
+            let line = err.span().map(|span| {
+                input
+                    .bytes()
+                    .take(span.start)
+                    .filter(|b| *b == b'\n')
+                    .count()
+                    + 1
+            });
             anyhow::anyhow!("invalid configuration TOML or unknown field near line {line:?}; check config.example.toml")
         })?;
         config.validate()?;
@@ -130,8 +137,9 @@ impl Config {
                 .webhook
                 .read()
                 .with_context(|| format!("destination {name}"))?;
+            // Parse errors can contain the webhook token.
             let url = reqwest::Url::parse(&destination.url)
-                .map_err(|_| anyhow::anyhow!("destination {name}: invalid webhook URL"))?;
+                .map_err(|_error| anyhow::anyhow!("destination {name}: invalid webhook URL"))?;
             let segments = url
                 .path_segments()
                 .map(|s| s.collect::<Vec<_>>())

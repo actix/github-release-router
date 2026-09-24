@@ -91,7 +91,7 @@ pub async fn receive(
     let release: Release = serde_json::from_value(
         body.get("release").cloned().unwrap_or(Value::Null),
     )
-    .map_err(|_| {
+    .map_err(|_error| {
         tracing::warn!(
             delivery,
             source = source_name,
@@ -101,7 +101,7 @@ pub async fn receive(
         );
         error::ErrorBadRequest("invalid release payload")
     })?;
-    let url = reqwest::Url::parse(&release.html_url).map_err(|_| {
+    let url = reqwest::Url::parse(&release.html_url).map_err(|_error| {
         tracing::warn!(
             delivery,
             source = source_name,
@@ -172,9 +172,9 @@ fn header<'a>(req: &'a HttpRequest, name: &str) -> actix_web::Result<&'a str> {
         );
         return Err(error::ErrorBadRequest("missing or duplicate GitHub header"));
     }
-    values[0]
-        .to_str()
-        .ok()
+    values
+        .first()
+        .and_then(|value| value.to_str().ok())
         .filter(|v| !v.is_empty())
         .ok_or_else(|| {
             tracing::warn!(header = name, reason = "invalid_value", "Webhook rejected");

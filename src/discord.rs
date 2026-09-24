@@ -43,18 +43,26 @@ pub fn render(repository: &str, release: &Release) -> Message {
         .as_deref()
         .filter(|s| !s.trim().is_empty())
         .unwrap_or(&release.tag_name);
-    let mut payload = json!({
-        "allowed_mentions": {"parse": [], "users": [], "roles": [], "replied_user": false},
-        "embeds": [{"title": clip(name, 256),
+    let mut payload = serde_json::Map::new();
+    payload.insert(
+        "allowed_mentions".into(),
+        json!({"parse": [], "users": [], "roles": [], "replied_user": false}),
+    );
+    payload.insert(
+        "embeds".into(),
+        json!([{"title": clip(name, 256),
             "url": release.html_url, "description": description, "color": 0x5865F2,
-            "author": {"name": clip(repository, 256)} }]
-    });
+            "author": {"name": clip(repository, 256)} }]),
+    );
     if long {
-        payload["attachments"] = json!([{"id": 0, "filename": "release-notes.md"}]);
+        payload.insert(
+            "attachments".into(),
+            json!([{"id": 0, "filename": "release-notes.md"}]),
+        );
     }
     // One embed: title 256 + author 256 + description 4096 <= 6000.
     Message {
-        payload,
+        payload: Value::Object(payload),
         notes: long.then(|| notes.to_owned()),
     }
 }

@@ -102,6 +102,10 @@ async fn run_command() -> Result<()> {
             tracing::info!(job_id = id, "Failed delivery scheduled for retry");
         }
         Command::Serve => serve(config, store.clone()).await?,
+        #[expect(
+            clippy::unreachable,
+            reason = "Preview returns before configuration loads"
+        )]
         Command::Preview { .. } => unreachable!(),
     }
     store.0.close().await;

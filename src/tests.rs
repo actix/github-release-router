@@ -504,7 +504,7 @@ async fn config_validates_references_and_redacts_secrets() {
         "https://discord.com/api/v10/webhooks/123/private-token",
     )
     .unwrap();
-    assert!(Config::load(&path).is_ok());
+    Config::load(&path).unwrap();
 }
 
 async fn wait_state(store: &Store, expected: &str, attempts: i64) {

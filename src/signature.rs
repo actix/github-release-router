@@ -41,7 +41,7 @@ impl RequestSignatureScheme for GithubSignature {
             .get_all("x-hub-signature-256")
             .collect::<Vec<_>>();
         let text = if values.len() == 1 {
-            values[0].to_str().ok()
+            values.first().and_then(|value| value.to_str().ok())
         } else {
             None
         };
@@ -58,7 +58,7 @@ impl RequestSignatureScheme for GithubSignature {
                 error::ErrorUnauthorized("missing or malformed signature")
             })?;
         let mac = Hmac::<Sha256>::new_from_slice(source.key.as_bytes())
-            .map_err(|_| error::ErrorInternalServerError("invalid signing key"))?;
+            .map_err(|_error| error::ErrorInternalServerError("invalid signing key"))?;
         Ok(Self { mac, candidate })
     }
 
@@ -68,7 +68,7 @@ impl RequestSignatureScheme for GithubSignature {
     }
 
     async fn finalize(self, req: &HttpRequest) -> Result<(), Error> {
-        self.mac.verify_slice(&self.candidate).map_err(|_| {
+        self.mac.verify_slice(&self.candidate).map_err(|_error| {
             tracing::warn!(
                 source = req.match_info().get("source").unwrap_or_default(),
                 reason = "invalid_signature",
