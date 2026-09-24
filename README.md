@@ -61,7 +61,7 @@ The renderer budgets 256 UTF-16 units each for title and repository and 4,096 fo
 
 ## Local development and preview
 
-Use stable Rust. `rust-toolchain.toml` selects stable; the Docker builder tracks the latest Rust release on Trixie. `Cargo.lock` is included and all builds use `--locked`. CI checks formatting, Clippy, and tests with Rust 1.94.0 on pull requests and before publishing an image.
+Use stable Rust. `rust-toolchain.toml` selects stable; the Docker builder tracks the latest Rust release on Trixie. `Cargo.lock` is included and all builds use `--locked`. CI runs separate formatting, Clippy, and test jobs with Rust 1.94.0 on pull requests and pushes to `main`.
 
 ```sh
 just fmt
@@ -81,7 +81,7 @@ Run `just container-smoke` after `just container-build` to check non-root startu
 
 ## Container publishing
 
-Pushing to `main` runs the [container workflow](.github/workflows/publish-container.yml). It builds the locked Dockerfile and publishes `ghcr.io/robjtede/github-release-router:latest` and a `sha-<commit>` tag. The workflow can also be started manually; `latest` is published only from the default branch. It uses the repository's `GITHUB_TOKEN` with package write permission. A new GHCR package is private by default, so make it public or grant your cluster image-pull access before deploying it.
+Pushing to `main` runs the [container workflow](.github/workflows/build.yml). It builds the locked Dockerfile and publishes `ghcr.io/robjtede/github-release-router:latest` and a `sha-<commit>` tag. The workflow uses the repository's `GITHUB_TOKEN` with package write permission. A new GHCR package is private by default, so make it public or grant your cluster image-pull access before deploying it.
 
 ## Kubernetes example
 
