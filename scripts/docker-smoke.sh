@@ -44,6 +44,7 @@ start() {
         if [ "$attempts" -ge 30 ]; then docker logs "$name"; exit 1; fi
         sleep 1
     done
+    test "$(docker exec "$name" cat /proc/1/comm)" = tini
     test "$(docker exec "$name" id -u)" = 10001
     test "$(docker exec "$name" curl --fail --silent http://127.0.0.1:8080/healthz)" = ok
 }
