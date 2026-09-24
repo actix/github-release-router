@@ -61,7 +61,7 @@ The renderer budgets 256 UTF-16 units each for title and repository and 4,096 fo
 
 ## Local development and preview
 
-Use stable Rust. `rust-toolchain.toml` selects stable; the Docker builder tracks the latest Rust release on Trixie. `Cargo.lock` is included and all builds use `--locked`. CI runs separate formatting, Clippy, and test jobs with Rust 1.94.0 on pull requests and pushes to `main`.
+Use stable Rust. `rust-toolchain.toml` and CI select the latest stable release; the Docker builder tracks the latest Rust release on Trixie. `Cargo.lock` is included and all builds use `--locked`. CI runs separate formatting, Clippy, and test jobs on pull requests and pushes to `main`.
 
 ```sh
 just fmt
