@@ -34,45 +34,100 @@ pub async fn receive(
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b == b'-')
     {
+        tracing::warn!(reason = "invalid_delivery_id", "webhook rejected");
         return Err(error::ErrorBadRequest("invalid delivery ID"));
     }
     let event = header(&req, "x-github-event")?;
-    let source = req
+    let source_name = req
         .match_info()
         .get("source")
-        .and_then(|s| config.sources.get(s))
+        .ok_or_else(|| error::ErrorNotFound("unknown source"))?;
+    let source = config
+        .sources
+        .get(source_name)
         .ok_or_else(|| error::ErrorNotFound("unknown source"))?;
     if event == "ping" {
+        tracing::info!(delivery, source = source_name, "authenticated GitHub ping");
         return Ok(HttpResponse::Ok().body("pong"));
     }
     let repository = body
         .pointer("/repository/full_name")
         .and_then(Value::as_str)
-        .ok_or_else(|| error::ErrorBadRequest("repository.full_name is required"))?;
+        .ok_or_else(|| {
+            tracing::warn!(
+                delivery,
+                source = source_name,
+                reason = "missing_repository",
+                "webhook rejected"
+            );
+            error::ErrorBadRequest("repository.full_name is required")
+        })?;
     if !source.repositories.iter().any(|r| r == repository) {
+        tracing::warn!(
+            delivery,
+            source = source_name,
+            reason = "repository_not_allowed",
+            "webhook rejected"
+        );
         return Err(error::ErrorForbidden(
             "repository is not allowed for this source",
         ));
     }
     if event != "release" || body.get("action").and_then(Value::as_str) != Some("published") {
-        tracing::info!(delivery, repository, result = "ignored", "incoming event");
+        let reason = if event == "release" {
+            "release_not_published"
+        } else {
+            "not_release_event"
+        };
+        tracing::info!(
+            delivery,
+            source = source_name,
+            repository,
+            reason,
+            "webhook ignored"
+        );
         return Ok(HttpResponse::NoContent().finish());
     }
-    let release: Release =
-        serde_json::from_value(body.get("release").cloned().unwrap_or(Value::Null))
-            .map_err(|_| error::ErrorBadRequest("invalid release payload"))?;
-    let url = reqwest::Url::parse(&release.html_url)
-        .map_err(|_| error::ErrorBadRequest("invalid release URL"))?;
+    let release: Release = serde_json::from_value(
+        body.get("release").cloned().unwrap_or(Value::Null),
+    )
+    .map_err(|_| {
+        tracing::warn!(
+            delivery,
+            source = source_name,
+            repository,
+            reason = "invalid_release_payload",
+            "webhook rejected"
+        );
+        error::ErrorBadRequest("invalid release payload")
+    })?;
+    let url = reqwest::Url::parse(&release.html_url).map_err(|_| {
+        tracing::warn!(
+            delivery,
+            source = source_name,
+            repository,
+            reason = "invalid_release_url",
+            "webhook rejected"
+        );
+        error::ErrorBadRequest("invalid release URL")
+    })?;
     if release.id <= 0
         || release.tag_name.is_empty()
         || url.scheme() != "https"
         || url.host_str() != Some("github.com")
         || release.html_url.len() > 2048
     {
+        tracing::warn!(
+            delivery,
+            source = source_name,
+            repository,
+            reason = "invalid_release_metadata",
+            "webhook rejected"
+        );
         return Err(error::ErrorBadRequest("invalid release ID, tag or URL"));
     }
     let destinations = routing::destinations(&config, repository, &release);
-    let inserted = store
+    let enqueue = store
         .enqueue(
             delivery,
             repository,
@@ -81,23 +136,50 @@ pub async fn receive(
             &discord::render(repository, &release),
         )
         .await
-        .map_err(|_| {
+        .map_err(|error| {
+            tracing::error!(delivery, source = source_name, repository, release_id = release.id, error = %error, "cannot persist announcement");
             error::ErrorServiceUnavailable("cannot persist announcement; redeliver this event")
         })?;
-    tracing::info!(delivery, repository, routes = ?destinations, result = if inserted {"persisted"} else {"duplicate"}, "incoming release");
+    let result = if !enqueue.delivery_inserted {
+        "duplicate_delivery"
+    } else if enqueue.jobs_inserted > 0 {
+        "queued"
+    } else if destinations.is_empty() {
+        "unmatched"
+    } else {
+        "duplicate_release"
+    };
+    tracing::info!(
+        delivery,
+        source = source_name,
+        repository,
+        release_id = release.id,
+        destinations = ?destinations,
+        jobs_inserted = enqueue.jobs_inserted,
+        result,
+        "release webhook processed"
+    );
     Ok(HttpResponse::Accepted().finish())
 }
 
 fn header<'a>(req: &'a HttpRequest, name: &str) -> actix_web::Result<&'a str> {
     let values = req.headers().get_all(name).collect::<Vec<_>>();
     if values.len() != 1 {
+        tracing::warn!(
+            header = name,
+            reason = "missing_or_duplicate",
+            "webhook rejected"
+        );
         return Err(error::ErrorBadRequest("missing or duplicate GitHub header"));
     }
     values[0]
         .to_str()
         .ok()
         .filter(|v| !v.is_empty())
-        .ok_or_else(|| error::ErrorBadRequest("invalid GitHub header"))
+        .ok_or_else(|| {
+            tracing::warn!(header = name, reason = "invalid_value", "webhook rejected");
+            error::ErrorBadRequest("invalid GitHub header")
+        })
 }
 
 pub fn endpoints(cfg: &mut web::ServiceConfig) {
@@ -109,9 +191,13 @@ pub fn endpoints(cfg: &mut web::ServiceConfig) {
                 match err {
                     JsonPayloadError::Overflow { .. }
                     | JsonPayloadError::OverflowKnownLength { .. } => {
+                        tracing::warn!(reason = "payload_too_large", "webhook rejected");
                         error::ErrorPayloadTooLarge("payload exceeds 2 MiB")
                     }
-                    _ => error::ErrorBadRequest("invalid JSON payload"),
+                    _ => {
+                        tracing::warn!(reason = "invalid_json", "webhook rejected");
+                        error::ErrorBadRequest("invalid JSON payload")
+                    }
                 }
             }),
     )
@@ -124,11 +210,14 @@ pub fn endpoints(cfg: &mut web::ServiceConfig) {
 }
 
 async fn ready(store: Data<Store>, worker: Data<crate::worker::WorkerHealth>) -> HttpResponse {
-    if worker.0.load(std::sync::atomic::Ordering::Relaxed)
-        && sqlx::query("SELECT 1").execute(&store.0).await.is_ok()
-    {
-        HttpResponse::Ok().body("ready")
-    } else {
+    if !worker.0.load(std::sync::atomic::Ordering::Relaxed) {
+        tracing::debug!(reason = "worker_inactive", "readiness check failed");
+        return HttpResponse::ServiceUnavailable().body("not ready");
+    }
+    if let Err(error) = sqlx::query("SELECT 1").execute(&store.0).await {
+        tracing::debug!(error = %error, "readiness database check failed");
         HttpResponse::ServiceUnavailable().body("not ready")
+    } else {
+        HttpResponse::Ok().body("ready")
     }
 }

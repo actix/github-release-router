@@ -21,12 +21,17 @@ impl RequestSignatureScheme for GithubSignature {
         let config = req
             .app_data::<Data<Config>>()
             .ok_or_else(|| error::ErrorInternalServerError("configuration unavailable"))?;
-        let source = req
-            .match_info()
-            .get("source")
-            .and_then(|name| config.sources.get(name))
-            .ok_or_else(|| error::ErrorNotFound("unknown source"))?;
+        let source_name = req.match_info().get("source").unwrap_or_default();
+        let source = config.sources.get(source_name).ok_or_else(|| {
+            tracing::warn!(reason = "unknown_source", "webhook rejected");
+            error::ErrorNotFound("unknown source")
+        })?;
         if req.headers().contains_key("content-encoding") {
+            tracing::warn!(
+                source = source_name,
+                reason = "content_encoding",
+                "webhook rejected"
+            );
             return Err(error::ErrorUnsupportedMediaType(
                 "content encoding is not supported",
             ));
@@ -44,7 +49,14 @@ impl RequestSignatureScheme for GithubSignature {
             .and_then(|s| s.strip_prefix("sha256="))
             .filter(|s| s.len() == 64)
             .and_then(|s| hex::decode(s).ok())
-            .ok_or_else(|| error::ErrorUnauthorized("missing or malformed signature"))?;
+            .ok_or_else(|| {
+                tracing::warn!(
+                    source = source_name,
+                    reason = "missing_or_malformed_signature",
+                    "webhook rejected"
+                );
+                error::ErrorUnauthorized("missing or malformed signature")
+            })?;
         let mac = Hmac::<Sha256>::new_from_slice(source.key.as_bytes())
             .map_err(|_| error::ErrorInternalServerError("invalid signing key"))?;
         Ok(Self { mac, candidate })
@@ -55,9 +67,14 @@ impl RequestSignatureScheme for GithubSignature {
         Ok(())
     }
 
-    async fn finalize(self, _: &HttpRequest) -> Result<(), Error> {
-        self.mac
-            .verify_slice(&self.candidate)
-            .map_err(|_| error::ErrorUnauthorized("invalid signature"))
+    async fn finalize(self, req: &HttpRequest) -> Result<(), Error> {
+        self.mac.verify_slice(&self.candidate).map_err(|_| {
+            tracing::warn!(
+                source = req.match_info().get("source").unwrap_or_default(),
+                reason = "invalid_signature",
+                "webhook rejected"
+            );
+            error::ErrorUnauthorized("invalid signature")
+        })
     }
 }

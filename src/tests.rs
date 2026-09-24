@@ -285,10 +285,18 @@ async fn restart_recovers_work_and_keeps_retry_and_deduplication() {
     let release = serde_json::from_value(event()["release"].clone()).unwrap();
     let message = discord::render("actix/actix-web", &release);
     let destinations = routing::destinations(&config(), "actix/actix-web", &release);
-    store
+    let enqueued = store
         .enqueue("delivery", "actix/actix-web", 123, &destinations, &message)
         .await
         .unwrap();
+    assert!(enqueued.delivery_inserted);
+    assert_eq!(enqueued.jobs_inserted, 1);
+    let duplicate_delivery = store
+        .enqueue("delivery", "actix/actix-web", 123, &destinations, &message)
+        .await
+        .unwrap();
+    assert!(!duplicate_delivery.delivery_inserted);
+    assert_eq!(duplicate_delivery.jobs_inserted, 0);
     let first = store.claim().await.unwrap().unwrap();
     assert_eq!(first.attempts, 1);
     store.0.close().await;
@@ -321,7 +329,7 @@ async fn restart_recovers_work_and_keeps_retry_and_deduplication() {
         .finish(first.id, "sent", 0, "confirmed", false)
         .await
         .unwrap();
-    store
+    let duplicate = store
         .enqueue(
             "different-delivery",
             "actix/actix-web",
@@ -331,6 +339,8 @@ async fn restart_recovers_work_and_keeps_retry_and_deduplication() {
         )
         .await
         .unwrap();
+    assert!(duplicate.delivery_inserted);
+    assert_eq!(duplicate.jobs_inserted, 0);
     assert!(store.claim().await.unwrap().is_none());
     sqlx::query("UPDATE jobs SET updated = 0")
         .execute(&store.0)

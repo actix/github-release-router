@@ -6,9 +6,10 @@ use std::{
     time::Duration,
 };
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use reqwest::{Client, multipart};
 use tokio::sync::watch;
+use tracing::Instrument as _;
 
 use crate::{config::Config, discord::Message, store::Store};
 
@@ -54,7 +55,15 @@ pub async fn send(client: &Client, url: &str, message: &Message, attempt: i64) -
     // Never expose reqwest errors: their Display representation includes the webhook token.
     let response = match request.send().await {
         Ok(response) => response,
-        Err(_) => {
+        Err(error) => {
+            let kind = if error.is_timeout() {
+                "timeout"
+            } else if error.is_connect() {
+                "connection"
+            } else {
+                "request"
+            };
+            tracing::debug!(kind, "Discord request failed");
             return Outcome::Retry {
                 delay: backoff(attempt),
                 reason: "network error",
@@ -63,6 +72,7 @@ pub async fn send(client: &Client, url: &str, message: &Message, attempt: i64) -
         }
     };
     let status = response.status();
+    tracing::debug!(http_status = status.as_u16(), "Discord responded");
     if status.as_u16() == 429 {
         let header_delay = response
             .headers()
@@ -119,6 +129,10 @@ pub async fn run(
 ) -> Result<()> {
     let result = run_inner(store, config, &mut shutdown, &health).await;
     health.0.store(false, Ordering::Relaxed);
+    match &result {
+        Ok(()) => tracing::info!("delivery worker stopped"),
+        Err(error) => tracing::error!(error = %format!("{error:#}"), "delivery worker stopped"),
+    }
     result
 }
 
@@ -129,19 +143,48 @@ async fn run_inner(
     health: &WorkerHealth,
 ) -> Result<()> {
     let client = client()?;
-    store.recover().await?;
-    store.maintain().await?;
+    store
+        .recover()
+        .await
+        .context("cannot recover interrupted deliveries")?;
+    store
+        .maintain()
+        .await
+        .context("cannot maintain delivery database")?;
     health.0.store(true, Ordering::Relaxed);
+    tracing::info!("delivery worker ready");
     let mut last_maintenance = tokio::time::Instant::now();
     while !*shutdown.borrow() {
         if last_maintenance.elapsed() >= Duration::from_secs(3600) {
-            store.maintain().await?;
+            store
+                .maintain()
+                .await
+                .context("cannot maintain delivery database")?;
             last_maintenance = tokio::time::Instant::now();
         }
-        if let Some(job) = store.claim().await? {
+        if let Some(job) = store
+            .claim()
+            .await
+            .context("cannot claim pending delivery")?
+        {
+            tracing::debug!(
+                job_id = job.id,
+                delivery = job.delivery,
+                repository = job.repository,
+                destination = job.destination,
+                attempt = job.attempts,
+                "claimed delivery"
+            );
             let outcome = match config.destinations.get(&job.destination) {
                 Some(destination) => {
-                    send(&client, &destination.url, &job.message, job.attempts).await
+                    send(&client, &destination.url, &job.message, job.attempts)
+                        .instrument(tracing::info_span!(
+                            "discord_attempt",
+                            job_id = job.id,
+                            destination = job.destination,
+                            attempt = job.attempts
+                        ))
+                        .await
                 }
                 None => Outcome::Failed("destination removed from configuration"),
             };
@@ -159,17 +202,47 @@ async fn run_inner(
                     ..
                 } => ("failed", delay, "retry budget exhausted", rate_limited),
             };
-            store.finish(job.id, state, delay, reason, limited).await?;
-            tracing::info!(
-                delivery = job.delivery,
-                repository = job.repository,
-                routes = job.routes,
-                destination = job.destination,
-                attempt = job.attempts,
-                result = state,
-                reason,
-                "delivery completed"
-            );
+            store
+                .finish(job.id, state, delay, reason, limited)
+                .await
+                .with_context(|| format!("cannot record result for job {}", job.id))?;
+            match state {
+                "sent" => tracing::info!(
+                    job_id = job.id,
+                    delivery = job.delivery,
+                    repository = job.repository,
+                    routes = job.routes,
+                    destination = job.destination,
+                    attempt = job.attempts,
+                    result = state,
+                    reason,
+                    "delivery completed"
+                ),
+                "pending" => tracing::warn!(
+                    job_id = job.id,
+                    delivery = job.delivery,
+                    repository = job.repository,
+                    routes = job.routes,
+                    destination = job.destination,
+                    attempt = job.attempts,
+                    result = state,
+                    reason,
+                    retry_delay_seconds = delay,
+                    rate_limited = limited,
+                    "delivery scheduled for retry"
+                ),
+                _ => tracing::error!(
+                    job_id = job.id,
+                    delivery = job.delivery,
+                    repository = job.repository,
+                    routes = job.routes,
+                    destination = job.destination,
+                    attempt = job.attempts,
+                    result = state,
+                    reason,
+                    "delivery failed"
+                ),
+            }
         } else {
             tokio::select! {
                 _ = tokio::time::sleep(Duration::from_millis(250)) => {},

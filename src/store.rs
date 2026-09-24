@@ -11,6 +11,11 @@ use crate::discord::Message;
 #[derive(Clone)]
 pub struct Store(pub SqlitePool);
 
+pub struct EnqueueResult {
+    pub delivery_inserted: bool,
+    pub jobs_inserted: u64,
+}
+
 pub struct Job {
     pub id: i64,
     pub delivery: String,
@@ -47,9 +52,13 @@ impl Store {
     }
 
     pub async fn recover(&self) -> Result<()> {
-        sqlx::query("UPDATE jobs SET state = 'pending' WHERE state = 'sending'")
+        let recovered = sqlx::query("UPDATE jobs SET state = 'pending' WHERE state = 'sending'")
             .execute(&self.0)
             .await?;
+        tracing::info!(
+            jobs = recovered.rows_affected(),
+            "recovered interrupted deliveries"
+        );
         Ok(())
     }
 
@@ -60,24 +69,29 @@ impl Store {
         release_id: i64,
         destinations: &BTreeMap<String, Vec<String>>,
         message: &Message,
-    ) -> Result<bool> {
+    ) -> Result<EnqueueResult> {
         let mut tx = self.0.begin().await?;
-        let inserted = sqlx::query("INSERT OR IGNORE INTO incoming VALUES (?, unixepoch())")
-            .bind(delivery)
-            .execute(&mut *tx)
-            .await?
-            .rows_affected()
-            > 0;
-        if inserted {
+        let delivery_inserted =
+            sqlx::query("INSERT OR IGNORE INTO incoming VALUES (?, unixepoch())")
+                .bind(delivery)
+                .execute(&mut *tx)
+                .await?
+                .rows_affected()
+                > 0;
+        let mut jobs_inserted = 0;
+        if delivery_inserted {
             let payload = serde_json::to_string(message)?;
             for (destination, routes) in destinations {
-                sqlx::query("INSERT OR IGNORE INTO jobs (delivery, repository, release_id, destination, routes, payload, updated) VALUES (?, ?, ?, ?, ?, ?, unixepoch())")
+                jobs_inserted += sqlx::query("INSERT OR IGNORE INTO jobs (delivery, repository, release_id, destination, routes, payload, updated) VALUES (?, ?, ?, ?, ?, ?, unixepoch())")
                     .bind(delivery).bind(repository).bind(release_id).bind(destination)
-                    .bind(serde_json::to_string(routes)?).bind(&payload).execute(&mut *tx).await?;
+                    .bind(serde_json::to_string(routes)?).bind(&payload).execute(&mut *tx).await?.rows_affected();
             }
         }
         tx.commit().await?;
-        Ok(inserted)
+        Ok(EnqueueResult {
+            delivery_inserted,
+            jobs_inserted,
+        })
     }
 
     pub async fn claim(&self) -> Result<Option<Job>> {
@@ -124,11 +138,16 @@ impl Store {
 
     pub async fn maintain(&self) -> Result<()> {
         let mut tx = self.0.begin().await?;
-        sqlx::query("DELETE FROM incoming WHERE created < unixepoch() - 2592000")
+        let deliveries = sqlx::query("DELETE FROM incoming WHERE created < unixepoch() - 2592000")
             .execute(&mut *tx)
             .await?;
-        sqlx::query("UPDATE jobs SET payload = NULL WHERE state = 'sent' AND updated < unixepoch() - 2592000 AND payload IS NOT NULL").execute(&mut *tx).await?;
+        let payloads = sqlx::query("UPDATE jobs SET payload = NULL WHERE state = 'sent' AND updated < unixepoch() - 2592000 AND payload IS NOT NULL").execute(&mut *tx).await?;
         tx.commit().await?;
+        tracing::debug!(
+            deliveries_removed = deliveries.rows_affected(),
+            payloads_removed = payloads.rows_affected(),
+            "database maintenance completed"
+        );
         Ok(())
     }
 

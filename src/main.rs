@@ -14,6 +14,8 @@ use std::{
 use actix_web::{App, HttpServer, web::Data};
 use anyhow::{Context as _, Result, ensure};
 use clap::{Parser, Subcommand};
+use tracing::level_filters::LevelFilter;
+use tracing_subscriber::{EnvFilter, layer::SubscriberExt as _, util::SubscriberInitExt as _};
 
 #[derive(Parser)]
 #[command(version, about = "Route signed GitHub release events to Discord")]
@@ -41,13 +43,26 @@ enum Command {
 
 #[actix_web::main]
 async fn main() -> Result<()> {
-    tracing_subscriber::fmt()
-        .json()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "github_release_router=info".into()),
+    tracing_subscriber::registry()
+        .with(
+            EnvFilter::builder()
+                .with_default_directive(LevelFilter::INFO.into())
+                .from_env_lossy(),
+        )
+        .with(
+            tracing_subscriber::fmt::layer()
+                .without_time()
+                .with_writer(std::io::stderr),
         )
         .init();
+    let result = run_command().await;
+    if let Err(error) = &result {
+        tracing::error!(error = %format!("{error:#}"), "command failed");
+    }
+    result
+}
+
+async fn run_command() -> Result<()> {
     let args = Args::parse();
     if let Command::Preview { payload } = args.command {
         let value: serde_json::Value = serde_json::from_slice(&std::fs::read(payload)?)?;
@@ -64,6 +79,13 @@ async fn main() -> Result<()> {
         return Ok(());
     }
     let config = Arc::new(config::Config::load(&args.config)?);
+    tracing::info!(
+        bind = %config.bind,
+        sources = config.sources.len(),
+        destinations = config.destinations.len(),
+        routes = config.routes.len(),
+        "configuration loaded"
+    );
     if let Some(parent) = std::path::Path::new(&config.database)
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
@@ -71,9 +93,13 @@ async fn main() -> Result<()> {
         std::fs::create_dir_all(parent).context("cannot create database directory")?;
     }
     let store = store::Store::open(&config.database).await?;
+    tracing::info!("database ready");
     match args.command {
         Command::Failed => println!("{}", serde_json::to_string_pretty(&store.failed().await?)?),
-        Command::Retry { id } => ensure!(store.retry(id).await?, "no failed delivery with ID {id}"),
+        Command::Retry { id } => {
+            ensure!(store.retry(id).await?, "no failed delivery with ID {id}");
+            tracing::info!(job_id = id, "failed delivery scheduled for retry");
+        }
         Command::Serve => serve(config, store.clone()).await?,
         Command::Preview { .. } => unreachable!(),
     }
@@ -91,6 +117,7 @@ async fn serve(config: Arc<config::Config>, store: store::Store) -> Result<()> {
         .context("cannot open service lock file")?;
     lock.try_lock()
         .context("another server holds this database lock")?;
+    tracing::info!("database lock acquired");
 
     let health = worker::WorkerHealth(Arc::new(AtomicBool::new(false)));
     let (stop, receiver) = tokio::sync::watch::channel(false);
@@ -109,6 +136,7 @@ async fn serve(config: Arc<config::Config>, store: store::Store) -> Result<()> {
     .shutdown_timeout(35)
     .bind(&config.bind)?
     .run();
+    tracing::info!(bind = %config.bind, "HTTP server starting");
     let handle = server.handle();
     let mut delivery = tokio::spawn(worker::run(store, config, receiver, health));
     let mut http = tokio::spawn(server);
@@ -127,14 +155,17 @@ async fn serve(config: Arc<config::Config>, store: store::Store) -> Result<()> {
             handle.stop(true).await;
             http.await??;
             result??;
+            tracing::error!("delivery worker stopped unexpectedly");
             anyhow::bail!("delivery worker stopped unexpectedly");
         },
         result = &mut http => {
             stop.send_replace(true);
             delivery.await??;
             result??;
+            tracing::warn!("HTTP server stopped");
         },
     }
+    tracing::info!("service stopped");
     Ok(())
 }
 
