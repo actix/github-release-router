@@ -42,8 +42,16 @@ enum Command {
     },
 }
 
-#[actix_web::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
+    let args = Args::parse();
+    // Keep the client alive until the runtime stops and pending events are sent.
+    let _sentry = matches!(args.command, Command::Serve).then(|| {
+        let mut options = sentry::ClientOptions::default();
+        options.release = sentry::release_name!();
+
+        sentry::init(options)
+    });
+
     tracing_subscriber::registry()
         .with(
             EnvFilter::builder()
@@ -55,16 +63,17 @@ async fn main() -> Result<()> {
                 .without_time()
                 .with_writer(std::io::stderr),
         )
+        .with(sentry::integrations::tracing::layer())
         .init();
-    let result = run_command().await;
+
+    let result = actix_web::rt::System::new().block_on(run_command(args));
     if let Err(error) = &result {
         tracing::error!(error = %format!("{error:#}"), "Command failed");
     }
     result
 }
 
-async fn run_command() -> Result<()> {
-    let args = Args::parse();
+async fn run_command(args: Args) -> Result<()> {
     if let Command::Preview { payload } = args.command {
         let value: serde_json::Value = serde_json::from_slice(&std::fs::read(payload)?)?;
         let repository = value
@@ -132,6 +141,7 @@ async fn serve(config: Arc<config::Config>, store: store::Store) -> Result<()> {
     let server = HttpServer::new(move || {
         App::new()
             .wrap(TracingLogger::default())
+            .wrap(sentry::integrations::actix::Sentry::new())
             .app_data(Data::from(app_config.clone()))
             .app_data(Data::new(app_store.clone()))
             .app_data(Data::new(app_health.clone()))

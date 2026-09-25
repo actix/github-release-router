@@ -4,6 +4,9 @@ services:
     image: github-release-router:local
     restart: unless-stopped
     init: true
+    environment:
+      SENTRY_DSN: ${SENTRY_DSN:-}
+      SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-production}
     read_only: true
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
