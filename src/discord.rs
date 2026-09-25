@@ -3,7 +3,7 @@ use serde_json::{Value, json};
 
 use crate::github::Release;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Message {
     pub payload: Value,
     pub notes: Option<String>,

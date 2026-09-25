@@ -6,12 +6,12 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{Context as _, Result};
+use anyhow::Result;
 use reqwest::{Client, multipart};
 use tokio::sync::watch;
 use tracing::Instrument as _;
 
-use crate::{config::Config, discord::Message, store::Store};
+use crate::{config::Config, discord::Message, queue::Queue};
 
 #[derive(Clone)]
 pub struct WorkerHealth(pub Arc<AtomicBool>);
@@ -122,12 +122,12 @@ pub async fn send(client: &Client, url: &str, message: &Message, attempt: i64) -
 }
 
 pub async fn run(
-    store: Store,
+    queue: Queue,
     config: Arc<Config>,
     mut shutdown: watch::Receiver<bool>,
     health: WorkerHealth,
 ) -> Result<()> {
-    let result = run_inner(store, config, &mut shutdown, &health).await;
+    let result = run_inner(queue, config, &mut shutdown, &health).await;
     health.0.store(false, Ordering::Relaxed);
     match &result {
         Ok(()) => tracing::info!("Delivery worker stopped"),
@@ -137,36 +137,16 @@ pub async fn run(
 }
 
 async fn run_inner(
-    store: Store,
+    queue: Queue,
     config: Arc<Config>,
     shutdown: &mut watch::Receiver<bool>,
     health: &WorkerHealth,
 ) -> Result<()> {
     let client = client()?;
-    store
-        .recover()
-        .await
-        .context("cannot recover interrupted deliveries")?;
-    store
-        .maintain()
-        .await
-        .context("cannot maintain delivery database")?;
     health.0.store(true, Ordering::Relaxed);
     tracing::info!("Delivery worker ready");
-    let mut last_maintenance = tokio::time::Instant::now();
     while !*shutdown.borrow() {
-        if last_maintenance.elapsed() >= Duration::from_secs(3600) {
-            store
-                .maintain()
-                .await
-                .context("cannot maintain delivery database")?;
-            last_maintenance = tokio::time::Instant::now();
-        }
-        if let Some(job) = store
-            .claim()
-            .await
-            .context("cannot claim pending delivery")?
-        {
+        if let Some(job) = queue.claim().await {
             tracing::debug!(
                 job_id = job.id,
                 delivery = job.delivery,
@@ -202,16 +182,12 @@ async fn run_inner(
                     ..
                 } => ("failed", delay, "retry budget exhausted", rate_limited),
             };
-            store
-                .finish(job.id, state, delay, reason, limited)
-                .await
-                .with_context(|| format!("cannot record result for job {}", job.id))?;
             match state {
                 "sent" => tracing::info!(
                     job_id = job.id,
                     delivery = job.delivery,
                     repository = job.repository,
-                    routes = job.routes,
+                    routes = ?job.routes,
                     destination = job.destination,
                     attempt = job.attempts,
                     result = state,
@@ -222,7 +198,7 @@ async fn run_inner(
                     job_id = job.id,
                     delivery = job.delivery,
                     repository = job.repository,
-                    routes = job.routes,
+                    routes = ?job.routes,
                     destination = job.destination,
                     attempt = job.attempts,
                     result = state,
@@ -235,7 +211,7 @@ async fn run_inner(
                     job_id = job.id,
                     delivery = job.delivery,
                     repository = job.repository,
-                    routes = job.routes,
+                    routes = ?job.routes,
                     destination = job.destination,
                     attempt = job.attempts,
                     result = state,
@@ -243,6 +219,9 @@ async fn run_inner(
                     "Delivery failed"
                 ),
             }
+            queue
+                .finish(job, state == "pending", delay, state == "sent", limited)
+                .await;
         } else {
             tokio::select! {
                 _ = tokio::time::sleep(Duration::from_millis(250)) => {},

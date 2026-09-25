@@ -6,7 +6,7 @@ use actix_web_lab::extract::RequestSignature;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::{config::Config, discord, routing, signature::GithubSignature, store::Store};
+use crate::{config::Config, discord, queue::Queue, routing, signature::GithubSignature};
 
 pub const MAX_BODY: usize = 2 * 1024 * 1024;
 pub type SignedBody = RequestSignature<web::Json<Value>, GithubSignature>;
@@ -25,7 +25,7 @@ pub async fn receive(
     req: HttpRequest,
     body: SignedBody,
     config: Data<Config>,
-    store: Data<Store>,
+    queue: Data<Queue>,
 ) -> actix_web::Result<HttpResponse> {
     let (body, ()) = body.into_parts();
     let delivery = header(&req, "x-github-delivery")?;
@@ -127,7 +127,7 @@ pub async fn receive(
         return Err(error::ErrorBadRequest("invalid release ID, tag or URL"));
     }
     let destinations = routing::destinations(&config, repository, &release);
-    let enqueue = store
+    let enqueue = queue
         .enqueue(
             delivery,
             repository,
@@ -137,8 +137,8 @@ pub async fn receive(
         )
         .await
         .map_err(|error| {
-            tracing::error!(delivery, source = source_name, repository, release_id = release.id, error = %error, "Cannot persist announcement");
-            error::ErrorServiceUnavailable("cannot persist announcement; redeliver this event")
+            tracing::error!(delivery, source = source_name, repository, release_id = release.id, error = %error, "Cannot queue announcement");
+            error::ErrorServiceUnavailable("cannot queue announcement; redeliver this event")
         })?;
     let result = if !enqueue.delivery_inserted {
         "duplicate_delivery"
@@ -209,15 +209,11 @@ pub fn endpoints(cfg: &mut web::ServiceConfig) {
     .route("/readyz", web::get().to(ready));
 }
 
-async fn ready(store: Data<Store>, worker: Data<crate::worker::WorkerHealth>) -> HttpResponse {
+async fn ready(worker: Data<crate::worker::WorkerHealth>) -> HttpResponse {
     if !worker.0.load(std::sync::atomic::Ordering::Relaxed) {
         tracing::debug!(reason = "worker_inactive", "Readiness check failed");
         return HttpResponse::ServiceUnavailable().body("not ready");
     }
-    if let Err(error) = sqlx::query("SELECT 1").execute(&store.0).await {
-        tracing::debug!(error = %error, "Readiness database check failed");
-        HttpResponse::ServiceUnavailable().body("not ready")
-    } else {
-        HttpResponse::Ok().body("ready")
-    }
+
+    HttpResponse::Ok().body("ready")
 }

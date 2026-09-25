@@ -1,5 +1,4 @@
 bind = "0.0.0.0:8080"
-database = "/data/router.sqlite"
 
 # A repository hook and an organization hook use the same endpoint format.
 # Configure each hook with the secret for its named source.

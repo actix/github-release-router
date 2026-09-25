@@ -6,7 +6,6 @@ metadata:
 data:
   config.toml: |
     bind = "0.0.0.0:8080"
-    database = "/data/router.sqlite"
 
     [sources.actix]
     repositories = ["actix/actix-web"]

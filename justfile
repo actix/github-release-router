@@ -22,6 +22,6 @@ container-build:
 container-run:
     docker compose up --build -d
 
-# Requires Docker, OpenSSL, SQLite CLI, and ripgrep. Uses no external network.
+# Requires Docker, OpenSSL, and ripgrep. Uses no external network.
 container-smoke:
     ./scripts/docker-smoke.sh

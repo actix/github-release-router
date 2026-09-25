@@ -1,9 +1,9 @@
 mod config;
 mod discord;
 mod github;
+mod queue;
 mod routing;
 mod signature;
-mod store;
 mod worker;
 
 use std::{
@@ -12,7 +12,7 @@ use std::{
 };
 
 use actix_web::{App, HttpServer, web::Data};
-use anyhow::{Context as _, Result, ensure};
+use anyhow::{Context as _, Result};
 use clap::{Parser, Subcommand};
 use tracing::level_filters::LevelFilter;
 use tracing_actix_web::TracingLogger;
@@ -33,12 +33,6 @@ enum Command {
     /// Render a webhook payload without loading secrets or making requests.
     Preview {
         payload: PathBuf,
-    },
-    /// List permanent and exhausted delivery failures as JSON.
-    Failed,
-    /// Reset one failed delivery's retry budget.
-    Retry {
-        id: i64,
     },
 }
 
@@ -96,54 +90,21 @@ async fn run_command(args: Args) -> Result<()> {
         routes = config.routes.len(),
         "Configuration loaded"
     );
-    if let Some(parent) = std::path::Path::new(&config.database)
-        .parent()
-        .filter(|p| !p.as_os_str().is_empty())
-    {
-        std::fs::create_dir_all(parent).context("cannot create database directory")?;
-    }
-    let store = store::Store::open(&config.database).await?;
-    tracing::info!("Database ready");
-    match args.command {
-        Command::Failed => println!("{}", serde_json::to_string_pretty(&store.failed().await?)?),
-        Command::Retry { id } => {
-            ensure!(store.retry(id).await?, "no failed delivery with ID {id}");
-            tracing::info!(job_id = id, "Failed delivery scheduled for retry");
-        }
-        Command::Serve => serve(config, store.clone()).await?,
-        #[expect(
-            clippy::unreachable,
-            reason = "Preview returns before configuration loads"
-        )]
-        Command::Preview { .. } => unreachable!(),
-    }
-    store.0.close().await;
-    Ok(())
+    serve(config, queue::Queue::default()).await
 }
 
-async fn serve(config: Arc<config::Config>, store: store::Store) -> Result<()> {
-    // Keep the lock file in place: removing it can let two processes lock different inodes.
-    let lock = std::fs::OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .write(true)
-        .open(format!("{}.lock", config.database))
-        .context("cannot open service lock file")?;
-    lock.try_lock()
-        .context("another server holds this database lock")?;
-    tracing::info!("Database lock acquired");
-
+async fn serve(config: Arc<config::Config>, queue: queue::Queue) -> Result<()> {
     let health = worker::WorkerHealth(Arc::new(AtomicBool::new(false)));
     let (stop, receiver) = tokio::sync::watch::channel(false);
     let app_config = config.clone();
-    let app_store = store.clone();
+    let app_queue = queue.clone();
     let app_health = health.clone();
     let server = HttpServer::new(move || {
         App::new()
             .wrap(TracingLogger::default())
             .wrap(sentry::integrations::actix::Sentry::new())
             .app_data(Data::from(app_config.clone()))
-            .app_data(Data::new(app_store.clone()))
+            .app_data(Data::new(app_queue.clone()))
             .app_data(Data::new(app_health.clone()))
             .configure(github::endpoints)
     })
@@ -154,7 +115,7 @@ async fn serve(config: Arc<config::Config>, store: store::Store) -> Result<()> {
     .run();
     tracing::info!(bind = %config.bind, "HTTP server starting");
     let handle = server.handle();
-    let mut delivery = tokio::spawn(worker::run(store, config, receiver, health));
+    let mut delivery = tokio::spawn(worker::run(queue, config, receiver, health));
     let mut http = tokio::spawn(server);
 
     tokio::select! {

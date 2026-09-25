@@ -32,10 +32,9 @@ RUN cargo --locked build --release
 ## Runner ##
 ############
 FROM bitnami/minideb:trixie
-WORKDIR /data
+WORKDIR /app
 
-RUN install_packages ca-certificates curl tini \
-    && chown 10001:10001 /data
+RUN install_packages ca-certificates curl tini
 
 COPY --from=builder /build/target/release/github-release-router /usr/local/bin/github-release-router
 USER 10001:10001

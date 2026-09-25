@@ -8,8 +8,6 @@ use serde::Deserialize;
 pub struct Config {
     #[serde(default = "default_bind")]
     pub bind: String,
-    #[serde(default = "default_database")]
-    pub database: String,
     pub sources: BTreeMap<String, Source>,
     pub destinations: BTreeMap<String, Destination>,
     pub routes: Vec<Route>,
@@ -17,9 +15,6 @@ pub struct Config {
 
 fn default_bind() -> String {
     "0.0.0.0:8080".into()
-}
-fn default_database() -> String {
-    "data/router.sqlite".into()
 }
 
 #[derive(Deserialize)]
@@ -107,7 +102,6 @@ impl Config {
         self.bind
             .parse::<std::net::SocketAddr>()
             .context("bind must be an IP address and port")?;
-        ensure!(!self.database.is_empty(), "database path is empty");
         ensure!(
             !self.sources.is_empty() && !self.destinations.is_empty() && !self.routes.is_empty(),
             "sources, destinations, and routes must not be empty"

@@ -15,15 +15,14 @@ use sha2::Sha256;
 
 use crate::{
     config::{Config, Destination, Route, Secret, Source},
-    discord, github, routing,
-    store::Store,
-    worker,
+    discord, github,
+    queue::Queue,
+    routing, worker,
 };
 
 fn config() -> Config {
     Config {
         bind: "127.0.0.1:8080".into(),
-        database: ":memory:".into(),
         sources: BTreeMap::from([(
             "org".into(),
             Source {
@@ -62,13 +61,6 @@ fn sign(body: &[u8]) -> String {
     let mut mac = Hmac::<Sha256>::new_from_slice(b"test-secret").unwrap();
     mac.update(body);
     format!("sha256={}", hex::encode(mac.finalize().into_bytes()))
-}
-async fn database() -> (tempfile::TempDir, Store) {
-    let dir = tempfile::tempdir().unwrap();
-    let store = Store::open(dir.path().join("test.sqlite").to_str().unwrap())
-        .await
-        .unwrap();
-    (dir, store)
 }
 
 #[actix_web::test]
@@ -127,11 +119,11 @@ async fn signatures_cover_exact_bytes_and_chunked_payloads() {
 
 #[actix_web::test]
 async fn incoming_filters_authorizes_limits_and_deduplicates() {
-    let (_dir, store) = database().await;
+    let queue = Queue::default();
     let app = test::init_service(
         App::new()
             .app_data(Data::new(config()))
-            .app_data(Data::new(store.clone()))
+            .app_data(Data::new(queue.clone()))
             .app_data(Data::new(worker::WorkerHealth(Arc::new(AtomicBool::new(
                 true,
             )))))
@@ -172,13 +164,8 @@ async fn incoming_filters_authorizes_limits_and_deduplicates() {
             "{id}"
         );
     }
-    assert_eq!(
-        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM jobs")
-            .fetch_one(&store.0)
-            .await
-            .unwrap(),
-        1
-    );
+    assert!(queue.claim().await.is_some());
+    assert!(queue.claim().await.is_none());
     let huge = json!({"body": "x".repeat(github::MAX_BODY)}).to_string();
     let request = test::TestRequest::post()
         .uri("/webhooks/github/org")
@@ -277,83 +264,6 @@ async fn unicode_notes_are_complete_and_embed_limits_hold() {
             assert!(message.notes.is_none());
         }
     }
-}
-
-#[actix_web::test]
-async fn restart_recovers_work_and_keeps_retry_and_deduplication() {
-    let (dir, store) = database().await;
-    let release = serde_json::from_value(event()["release"].clone()).unwrap();
-    let message = discord::render("actix/actix-web", &release);
-    let destinations = routing::destinations(&config(), "actix/actix-web", &release);
-    let enqueued = store
-        .enqueue("delivery", "actix/actix-web", 123, &destinations, &message)
-        .await
-        .unwrap();
-    assert!(enqueued.delivery_inserted);
-    assert_eq!(enqueued.jobs_inserted, 1);
-    let duplicate_delivery = store
-        .enqueue("delivery", "actix/actix-web", 123, &destinations, &message)
-        .await
-        .unwrap();
-    assert!(!duplicate_delivery.delivery_inserted);
-    assert_eq!(duplicate_delivery.jobs_inserted, 0);
-    let first = store.claim().await.unwrap().unwrap();
-    assert_eq!(first.attempts, 1);
-    store.0.close().await;
-    let store = Store::open(dir.path().join("test.sqlite").to_str().unwrap())
-        .await
-        .unwrap();
-    store.recover().await.unwrap();
-    let recovered = store.claim().await.unwrap().unwrap();
-    assert_eq!(recovered.id, first.id);
-    assert_eq!(recovered.attempts, 2);
-    store
-        .finish(first.id, "pending", 100, "rate limited", true)
-        .await
-        .unwrap();
-    store.recover().await.unwrap();
-    assert!(store.claim().await.unwrap().is_none());
-    store
-        .finish(first.id, "failed", 0, "permanent", false)
-        .await
-        .unwrap();
-    assert_eq!(store.failed().await.unwrap().len(), 1);
-    assert!(store.retry(first.id).await.unwrap());
-    assert!(!store.retry(first.id).await.unwrap());
-    sqlx::query("UPDATE cooldown SET until = 0")
-        .execute(&store.0)
-        .await
-        .unwrap();
-    assert_eq!(store.claim().await.unwrap().unwrap().attempts, 1);
-    store
-        .finish(first.id, "sent", 0, "confirmed", false)
-        .await
-        .unwrap();
-    let duplicate = store
-        .enqueue(
-            "different-delivery",
-            "actix/actix-web",
-            123,
-            &destinations,
-            &message,
-        )
-        .await
-        .unwrap();
-    assert!(duplicate.delivery_inserted);
-    assert_eq!(duplicate.jobs_inserted, 0);
-    assert!(store.claim().await.unwrap().is_none());
-    sqlx::query("UPDATE jobs SET updated = 0")
-        .execute(&store.0)
-        .await
-        .unwrap();
-    store.maintain().await.unwrap();
-    assert_eq!(
-        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM jobs WHERE payload IS NULL")
-            .fetch_one(&store.0)
-            .await
-            .unwrap(),
-        1
-    );
 }
 
 #[actix_web::test]
@@ -507,26 +417,8 @@ async fn config_validates_references_and_redacts_secrets() {
     Config::load(&path).unwrap();
 }
 
-async fn wait_state(store: &Store, expected: &str, attempts: i64) {
-    tokio::time::timeout(std::time::Duration::from_secs(10), async {
-        loop {
-            let row =
-                sqlx::query_as::<_, (String, i64)>("SELECT state, attempts FROM jobs LIMIT 1")
-                    .fetch_one(&store.0)
-                    .await
-                    .unwrap();
-            if row == (expected.to_owned(), attempts) {
-                break;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .unwrap();
-}
-
 #[actix_web::test]
-async fn worker_retries_fake_discord_after_restart_and_drains_on_shutdown() {
+async fn worker_retries_fake_discord_and_finishes_active_send_on_shutdown() {
     use std::sync::atomic::{AtomicUsize, Ordering};
     let count = Arc::new(AtomicUsize::new(0));
     let entered = Arc::new(tokio::sync::Notify::new());
@@ -546,7 +438,7 @@ async fn worker_retries_fake_discord_after_restart_and_drains_on_shutdown() {
             let release = release.clone();
             async move {
                 match count.fetch_add(1, Ordering::SeqCst) {
-                    0 => HttpResponse::TooManyRequests().json(json!({"retry_after": 60})),
+                    0 => HttpResponse::TooManyRequests().json(json!({"retry_after": 0})),
                     1 => HttpResponse::InternalServerError().finish(),
                     _ => {
                         entered.notify_one();
@@ -562,12 +454,12 @@ async fn worker_retries_fake_discord_after_restart_and_drains_on_shutdown() {
     .run();
     let handle = server.handle();
     actix_web::rt::spawn(server);
-    let (dir, store) = database().await;
+    let queue = Queue::default();
     let mut config = config();
     config.destinations.get_mut("web").unwrap().url = format!("http://{address}/webhook");
     let config = Arc::new(config);
     let release = serde_json::from_value(event()["release"].clone()).unwrap();
-    store
+    queue
         .enqueue(
             "worker-test",
             "actix/actix-web",
@@ -580,95 +472,22 @@ async fn worker_retries_fake_discord_after_restart_and_drains_on_shutdown() {
     let health = worker::WorkerHealth(Arc::new(AtomicBool::new(false)));
     let (stop, receiver) = tokio::sync::watch::channel(false);
     let task = tokio::spawn(worker::run(
-        store.clone(),
+        queue.clone(),
         config.clone(),
         receiver,
         health.clone(),
     ));
-    wait_state(&store, "pending", 1).await;
-    stop.send_replace(true);
-    task.await.unwrap().unwrap();
-    assert!(!health.0.load(Ordering::Relaxed));
-    store.0.close().await;
-
-    let store = Store::open(dir.path().join("test.sqlite").to_str().unwrap())
-        .await
-        .unwrap();
-    assert!(store.claim().await.unwrap().is_none());
-    assert_eq!(count.load(Ordering::SeqCst), 1);
-    // Advance the persisted due dates, without waiting a minute in the test.
-    sqlx::query("UPDATE jobs SET next_attempt = 0")
-        .execute(&store.0)
-        .await
-        .unwrap();
-    sqlx::query("UPDATE cooldown SET until = 0")
-        .execute(&store.0)
-        .await
-        .unwrap();
-    let (stop, receiver) = tokio::sync::watch::channel(false);
-    let task = tokio::spawn(worker::run(store.clone(), config, receiver, health.clone()));
-    wait_state(&store, "pending", 2).await;
-    assert!(store.claim().await.unwrap().is_none());
-    sqlx::query("UPDATE jobs SET next_attempt = 0")
-        .execute(&store.0)
-        .await
-        .unwrap();
-    tokio::time::timeout(std::time::Duration::from_secs(5), entered.notified())
+    tokio::time::timeout(std::time::Duration::from_secs(15), entered.notified())
         .await
         .unwrap();
     stop.send_replace(true);
     assert!(!task.is_finished());
     release_send.notify_one();
     task.await.unwrap().unwrap();
-    wait_state(&store, "sent", 3).await;
+    assert!(queue.claim().await.is_none());
     assert_eq!(count.load(Ordering::SeqCst), 3);
     assert!(!health.0.load(Ordering::Relaxed));
     handle.stop(true).await;
-}
-
-#[actix_web::test]
-async fn storage_failure_does_not_acknowledge_or_consume_delivery_id() {
-    let (_dir, store) = database().await;
-    let app = test::init_service(
-        App::new()
-            .app_data(Data::new(config()))
-            .app_data(Data::new(store.clone()))
-            .configure(github::endpoints),
-    )
-    .await;
-    sqlx::query("CREATE TRIGGER fail_job BEFORE INSERT ON jobs BEGIN SELECT RAISE(ABORT, 'simulated storage failure'); END").execute(&store.0).await.unwrap();
-    for expected in [503, 202] {
-        let body = event().to_string();
-        let request = test::TestRequest::post()
-            .uri("/webhooks/github/org")
-            .insert_header(("content-type", "application/json"))
-            .insert_header(("x-hub-signature-256", sign(body.as_bytes())))
-            .insert_header(("x-github-delivery", "storage-failure"))
-            .insert_header(("x-github-event", "release"))
-            .set_payload(body)
-            .to_request();
-        assert_eq!(test::call_service(&app, request).await.status(), expected);
-        if expected == 503 {
-            assert_eq!(
-                sqlx::query_scalar::<_, i64>("SELECT count(*) FROM incoming")
-                    .fetch_one(&store.0)
-                    .await
-                    .unwrap(),
-                0
-            );
-            sqlx::query("DROP TRIGGER fail_job")
-                .execute(&store.0)
-                .await
-                .unwrap();
-        }
-    }
-    assert_eq!(
-        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM jobs")
-            .fetch_one(&store.0)
-            .await
-            .unwrap(),
-        1
-    );
 }
 
 #[actix_web::test]
@@ -735,4 +554,218 @@ async fn chunked_size_limit_and_ambiguous_signature_headers_are_rejected() {
             .status_code(),
         413
     );
+}
+
+#[tokio::test(start_paused = true)]
+async fn queue_deduplicates_retries_and_resets_on_restart() {
+    let queue = Queue::default();
+    let release = serde_json::from_value(event()["release"].clone()).unwrap();
+    let message = discord::render("actix/actix-web", &release);
+    let destinations = routing::destinations(&config(), "actix/actix-web", &release);
+    assert_eq!(
+        queue
+            .enqueue("first", "actix/actix-web", 123, &destinations, &message)
+            .await
+            .unwrap()
+            .jobs_inserted,
+        1
+    );
+    assert!(
+        !queue
+            .enqueue("first", "actix/actix-web", 123, &destinations, &message)
+            .await
+            .unwrap()
+            .delivery_inserted
+    );
+    let job = queue.claim().await.unwrap();
+    assert_eq!(job.attempts, 1);
+    assert!(queue.claim().await.is_none());
+    assert_eq!(
+        queue
+            .enqueue("second", "actix/actix-web", 123, &destinations, &message)
+            .await
+            .unwrap()
+            .jobs_inserted,
+        0
+    );
+    queue.finish(job, true, 10, false, true).await;
+    queue
+        .enqueue("other", "actix/actix-web", 124, &destinations, &message)
+        .await
+        .unwrap();
+    assert!(queue.claim().await.is_none());
+    tokio::time::advance(std::time::Duration::from_secs(10)).await;
+    let other = queue.claim().await.unwrap();
+    assert_eq!(other.delivery, "other");
+    queue.finish(other, false, 0, true, false).await;
+    let retry = queue.claim().await.unwrap();
+    assert_eq!(retry.attempts, 2);
+    queue.finish(retry, false, 0, true, false).await;
+    assert_eq!(
+        queue
+            .enqueue("third", "actix/actix-web", 123, &destinations, &message)
+            .await
+            .unwrap()
+            .jobs_inserted,
+        0
+    );
+
+    let restarted = Queue::default();
+    assert!(restarted.claim().await.is_none());
+    assert_eq!(
+        restarted
+            .enqueue("first", "actix/actix-web", 123, &destinations, &message)
+            .await
+            .unwrap()
+            .jobs_inserted,
+        1
+    );
+
+    tokio::time::advance(std::time::Duration::from_secs(30 * 24 * 60 * 60)).await;
+    assert_eq!(
+        queue
+            .enqueue("first", "actix/actix-web", 123, &destinations, &message)
+            .await
+            .unwrap()
+            .jobs_inserted,
+        1
+    );
+}
+
+#[actix_web::test]
+async fn full_queue_rejects_atomically_and_failed_jobs_allow_redelivery() {
+    let queue = Queue::default();
+    let release = serde_json::from_value(event()["release"].clone()).unwrap();
+    let message = discord::render("actix/actix-web", &release);
+    let destinations = routing::destinations(&config(), "actix/actix-web", &release);
+    for id in 0..63 {
+        queue
+            .enqueue(
+                &format!("fill-{id}"),
+                "actix/actix-web",
+                id,
+                &destinations,
+                &message,
+            )
+            .await
+            .unwrap();
+    }
+    let two = BTreeMap::from([("web".into(), vec![]), ("other".into(), vec![])]);
+    let error = queue
+        .enqueue("overflow", "actix/actix-web", 100, &two, &message)
+        .await
+        .err()
+        .unwrap();
+    assert_eq!(error.to_string(), "delivery queue is full");
+    let job = queue.claim().await.unwrap();
+    // An in-flight job still consumes capacity.
+    assert!(
+        queue
+            .enqueue("overflow", "actix/actix-web", 100, &two, &message)
+            .await
+            .is_err()
+    );
+    queue.finish(job, false, 0, false, false).await;
+    assert_eq!(
+        queue
+            .enqueue("overflow", "actix/actix-web", 100, &two, &message)
+            .await
+            .unwrap()
+            .jobs_inserted,
+        2
+    );
+    let job = queue.claim().await.unwrap();
+    let delivery = job.delivery.clone();
+    queue.finish(job, false, 0, false, false).await;
+    assert_eq!(
+        queue
+            .enqueue(&delivery, "actix/actix-web", 1, &destinations, &message)
+            .await
+            .unwrap()
+            .jobs_inserted,
+        1
+    );
+}
+
+#[actix_web::test]
+async fn full_queue_returns_503_and_accepts_the_same_delivery_after_capacity_frees() {
+    let queue = Queue::default();
+    let release = serde_json::from_value(event()["release"].clone()).unwrap();
+    let message = discord::render("actix/actix-web", &release);
+    let destinations = routing::destinations(&config(), "actix/actix-web", &release);
+    for id in 0..64 {
+        queue
+            .enqueue(
+                &format!("fill-{id}"),
+                "actix/actix-web",
+                id,
+                &destinations,
+                &message,
+            )
+            .await
+            .unwrap();
+    }
+    let app = test::init_service(
+        App::new()
+            .app_data(Data::new(config()))
+            .app_data(Data::new(queue.clone()))
+            .configure(github::endpoints),
+    )
+    .await;
+
+    for expected in [503, 202] {
+        let body = event().to_string();
+        let request = test::TestRequest::post()
+            .uri("/webhooks/github/org")
+            .insert_header(("content-type", "application/json"))
+            .insert_header(("x-hub-signature-256", sign(body.as_bytes())))
+            .insert_header(("x-github-delivery", "overflow"))
+            .insert_header(("x-github-event", "release"))
+            .set_payload(body)
+            .to_request();
+        assert_eq!(test::call_service(&app, request).await.status(), expected);
+        if expected == 503 {
+            let job = queue.claim().await.unwrap();
+            queue.finish(job, false, 0, true, false).await;
+        }
+    }
+    let mut accepted = 0;
+    while let Some(job) = queue.claim().await {
+        if job.delivery == "overflow" {
+            accepted += 1;
+        }
+        queue.finish(job, false, 0, true, false).await;
+    }
+    assert_eq!(accepted, 1);
+}
+
+#[actix_web::test]
+async fn redelivery_retries_only_failed_destinations() {
+    let queue = Queue::default();
+    let release = serde_json::from_value(event()["release"].clone()).unwrap();
+    let message = discord::render("actix/actix-web", &release);
+    let destinations = BTreeMap::from([("a".into(), vec![]), ("b".into(), vec![])]);
+    let (first, duplicate) = tokio::join!(
+        queue.enqueue("delivery", "actix/actix-web", 123, &destinations, &message),
+        queue.enqueue("delivery", "actix/actix-web", 123, &destinations, &message),
+    );
+    assert_eq!(
+        first.unwrap().jobs_inserted + duplicate.unwrap().jobs_inserted,
+        2
+    );
+    let sent = queue.claim().await.unwrap();
+    assert_eq!(sent.destination, "a");
+    queue.finish(sent, false, 0, true, false).await;
+    let failed = queue.claim().await.unwrap();
+    queue.finish(failed, false, 0, false, false).await;
+    assert_eq!(
+        queue
+            .enqueue("delivery", "actix/actix-web", 123, &destinations, &message)
+            .await
+            .unwrap()
+            .jobs_inserted,
+        1
+    );
+    assert_eq!(queue.claim().await.unwrap().destination, "b");
+    assert!(queue.claim().await.is_none());
 }

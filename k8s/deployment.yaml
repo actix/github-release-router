@@ -4,7 +4,7 @@ metadata:
   name: github-release-router
   namespace: github-release-router
 spec:
-  # SQLite and the process lock require one active pod per database.
+  # Deduplication and rate limits are local to one process.
   replicas: 1
   strategy:
     type: Recreate
@@ -41,8 +41,6 @@ spec:
             - name: RUST_LOG
               value: github_release_router=info
           volumeMounts:
-            - name: data
-              mountPath: /data
             - name: config
               mountPath: /etc/router
               readOnly: true
@@ -72,9 +70,6 @@ spec:
               cpu: 500m
               memory: 256Mi
       volumes:
-        - name: data
-          persistentVolumeClaim:
-            claimName: github-release-router-data
         - name: config
           configMap:
             name: github-release-router-config
