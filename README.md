@@ -75,7 +75,11 @@ Run `just container-smoke` after `just container-build` to check non-root startu
 
 ## Container publishing
 
-Pushing to `main` runs the [container workflow](.github/workflows/build.yml). It builds the locked Dockerfile and publishes `ghcr.io/robjtede/github-release-router:latest` and a `sha-<commit>` tag. The workflow uses the repository's `GITHUB_TOKEN` with package write permission. A new GHCR package is private by default, so make it public or grant your cluster image-pull access before deploying it.
+Pushing to `main` runs the [container workflow](.github/workflows/build.yml). It builds the locked Dockerfile and publishes `ghcr.io/actix/github-release-router:latest` and a `sha-<commit>` candidate tag. Formatting, Clippy, and tests run through the reusable CI workflow. After those checks and the image build pass, a separate promotion job runs `just container-smoke` against the published image digest. It then points `stable` at that same image index without rebuilding it. A failed check leaves `stable` unchanged.
+
+Deployments must follow the digest behind `ghcr.io/actix/github-release-router:stable`. Publishing a candidate alone does not select a deployment image. The workflow also supports a manual run on `main`; runs on other branches cannot promote `stable`.
+
+The workflow uses the repository's `GITHUB_TOKEN` with package write permission. A new GHCR package is private by default, so make it public or grant your cluster image-pull access before deploying it.
 
 ## Kubernetes example
 
