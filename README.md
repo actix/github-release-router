@@ -55,7 +55,7 @@ The `serve` command supports Sentry error reporting. Set `SENTRY_DSN` to enable 
 
 ## Local development and preview
 
-Use stable Rust. `rust-toolchain.toml` and CI select the latest stable release; the Docker builder tracks the latest Rust release on Trixie. `Cargo.lock` is included and all builds use `--locked`. CI runs separate formatting, Clippy, test, and container build jobs on pull requests, merge groups, pushes to `main`, and `v*` tags. You can also run the container workflow manually.
+Use stable Rust. `rust-toolchain.toml` and CI select the latest stable release; the Docker builder tracks the latest Rust release on Trixie. `Cargo.lock` is included and all builds use `--locked`. CI runs separate formatting, Clippy, test, and container build jobs on pull requests, merge groups, and pushes to `main`. You can also run the container workflow manually.
 
 ```sh
 just fmt
@@ -77,9 +77,9 @@ Run `just container-smoke` after `just container-build` to check non-root startu
 
 The [container workflow](.github/workflows/build.yml) builds the locked Dockerfile for `linux/amd64`. Pull requests and merge groups build and smoke-test a local image without publishing. Formatting, Clippy, and tests run in the CI workflow.
 
-Pushes to `main` and `v*` tags publish `ghcr.io/actix/github-release-router:sha-<full-commit>` candidates and run formatting, Clippy, and tests through the reusable CI workflow. After those checks and the image build pass, the promotion job runs `just container-smoke` against the published image digest. It then updates `:stable` without rebuilding the image. Successful `main` runs also update `:latest`; successful `v*` tag runs also publish the Git tag as an image tag. A failed check leaves the deployment tags unchanged.
+Each push to `main` publishes a `ghcr.io/actix/github-release-router:sha-<full-commit>` candidate and runs formatting, Clippy, and tests through the reusable CI workflow. After those checks and the image build pass, the promotion job runs `just container-smoke` against the published image digest. It then updates `:stable` and `:latest` to that exact digest without rebuilding the image. A failed check leaves the deployment tags unchanged.
 
-Deployments must follow the digest behind `ghcr.io/actix/github-release-router:stable`, or pin the digest recorded in the promotion job summary. Publishing a candidate alone does not select a deployment image. Manual runs publish and promote only when you select `main` or a `v*` tag.
+Deployments must follow the digest behind `ghcr.io/actix/github-release-router:stable`, or pin the digest recorded in the promotion job summary. Publishing a candidate alone does not select a deployment image. Manual runs publish and promote only when you select `main`.
 
 The workflow uses the repository's `GITHUB_TOKEN` with package write permission. A new GHCR package is private by default, so make it public or grant your cluster image-pull access before deploying it.
 
