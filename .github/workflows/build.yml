@@ -2,8 +2,6 @@ name: Build and publish container image
 
 on:
   pull_request:
-  merge_group:
-    types: [checks_requested]
   push:
     branches:
       - main
@@ -18,7 +16,7 @@ concurrency:
 
 jobs:
   checks:
-    if: github.event_name != 'pull_request' && github.event_name != 'merge_group'
+    if: github.event_name != 'pull_request'
     uses: ./.github/workflows/ci.yml
 
   publish:

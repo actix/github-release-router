@@ -55,7 +55,7 @@ The `serve` command supports Sentry error reporting. Set `SENTRY_DSN` to enable 
 
 ## Local development and preview
 
-Use stable Rust. `rust-toolchain.toml` and CI select the latest stable release; the Docker builder tracks the latest Rust release on Trixie. `Cargo.lock` is included and all builds use `--locked`. CI runs separate formatting, Clippy, test, and container build jobs on pull requests, merge groups, and pushes to `main`. You can also run the container workflow manually.
+Use stable Rust. `rust-toolchain.toml` and CI select the latest stable release; the Docker builder tracks the latest Rust release on Trixie. `Cargo.lock` is included and all builds use `--locked`. CI runs separate formatting, Clippy, test, and container build jobs on pull requests and pushes to `main`. You can also run the container workflow manually.
 
 ```sh
 just fmt
@@ -75,7 +75,7 @@ Run `just container-smoke` after `just container-build` to check non-root startu
 
 ## Container publishing
 
-The [container workflow](.github/workflows/build.yml) builds the locked Dockerfile for `linux/amd64`. Pull requests and merge groups build and smoke-test a local image without publishing. Formatting, Clippy, and tests run in the CI workflow.
+The [container workflow](.github/workflows/build.yml) builds the locked Dockerfile for `linux/amd64`. Pull requests build and smoke-test a local image without publishing. Formatting, Clippy, and tests run in the CI workflow.
 
 Each push to `main` publishes a `ghcr.io/actix/github-release-router:sha-<full-commit>` candidate and runs formatting, Clippy, and tests through the reusable CI workflow. After those checks and the image build pass, the promotion job runs `just container-smoke` against the published image digest. It then updates `:stable` and `:latest` to that exact digest without rebuilding the image. A failed check leaves the deployment tags unchanged.
 
