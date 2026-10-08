@@ -48,6 +48,7 @@ fn config() -> Config {
             name: "web".into(),
             repository: "actix/actix-web".into(),
             tag_prefix: Some("web-".into()),
+            exclude_tags: Vec::new(),
             include_prereleases: false,
             destinations: vec!["web".into()],
         }],
@@ -185,12 +186,98 @@ async fn incoming_filters_authorizes_limits_and_deduplicates() {
 }
 
 #[actix_web::test]
+async fn incoming_excludes_case_insensitive_regexes_before_queueing_announcements() {
+    for (tag, expected_job) in [
+        ("actix-web-lab-derive-v0.1.0", false),
+        ("actix-web-lab-derive-", false),
+        ("actix-web-lab-v0.27.0-internal", false),
+        ("actix-web-lab-v0.27.0-TEST", false),
+        ("actix-web-lab-v0.27.0", true),
+        ("actix-web-lab-Derive-v0.1.0", false),
+        ("actix-web-lab-test-v0.1.0", true),
+        ("actix-web-lab-v0.27.0-internal-more", true),
+        ("other-actix-web-lab-v0.27.0", false),
+    ] {
+        let mut config = config();
+        config.sources.get_mut("org").unwrap().repositories = vec!["robjtede/actix-web-lab".into()];
+        config.routes = vec![
+            toml::from_str(
+                r#"
+            name = "lab"
+            repository = "robjtede/actix-web-lab"
+            tag_prefix = "actix-web-lab-"
+            exclude_tags = ["^actix-web-lab-derive-.*$", "-(internal|test)$"]
+            destinations = ["web"]
+            "#,
+            )
+            .unwrap(),
+        ];
+
+        let queue = Queue::default();
+        let app = test::init_service(
+            App::new()
+                .app_data(Data::new(config))
+                .app_data(Data::new(queue.clone()))
+                .configure(github::endpoints),
+        )
+        .await;
+
+        let mut value = event();
+        value["repository"]["full_name"] = json!("robjtede/actix-web-lab");
+        value["release"]["tag_name"] = json!(tag);
+        let body = value.to_string();
+        let request = test::TestRequest::post()
+            .uri("/webhooks/github/org")
+            .insert_header(("content-type", "application/json"))
+            .insert_header(("x-hub-signature-256", sign(body.as_bytes())))
+            .insert_header(("x-github-delivery", "tag-filter"))
+            .insert_header(("x-github-event", "release"))
+            .set_payload(body)
+            .to_request();
+
+        assert_eq!(
+            test::call_service(&app, request).await.status(),
+            202,
+            "{tag}"
+        );
+        assert_eq!(queue.claim().await.is_some(), expected_job, "{tag}");
+        assert!(queue.claim().await.is_none(), "{tag}");
+    }
+}
+
+#[actix_web::test]
+async fn routes_apply_tag_exclusions_per_route() {
+    let mut config = config();
+    config.routes[0].tag_prefix = None;
+    config.routes.push(
+        toml::from_str(
+            r#"
+            name = "filtered"
+            repository = "actix/actix-web"
+            exclude_tags = ["^actix-web-lab-derive-.*$"]
+            destinations = ["web", "another"]
+            "#,
+        )
+        .unwrap(),
+    );
+
+    let mut release: github::Release = serde_json::from_value(event()["release"].clone()).unwrap();
+    release.tag_name = "ACTIX-WEB-LAB-DERIVE-v0.1.0".into();
+
+    assert_eq!(
+        routing::destinations(&config, "actix/actix-web", &release),
+        BTreeMap::from([("web".into(), vec!["web".into()])])
+    );
+}
+
+#[actix_web::test]
 async fn routes_union_destinations_and_include_prereleases_per_route() {
     let mut config = config();
     config.routes.push(Route {
         name: "all".into(),
         repository: "actix/actix-web".into(),
         tag_prefix: None,
+        exclude_tags: Vec::new(),
         include_prereleases: true,
         destinations: vec!["web".into(), "another".into()],
     });
@@ -384,6 +471,12 @@ async fn config_validates_references_and_redacts_secrets() {
     assert_eq!(loaded.sources["org"].key, "test-secret");
     assert_eq!(loaded.bind, "0.0.0.0:8080");
     assert_eq!(loaded.routes[0].tag_prefix, None);
+    assert!(loaded.routes[0].exclude_tags.is_empty());
+
+    for patterns in ["[]", r#"["^web-derive-.*$", "-(internal|test)$"]"#] {
+        std::fs::write(&path, format!("{input}\nexclude_tags = {patterns}\n")).unwrap();
+        Config::load(&path).unwrap();
+    }
 
     for invalid in [
         input.replace("destinations = [\"web\"]", "destinations = [\"missing\"]"),
@@ -393,6 +486,8 @@ async fn config_validates_references_and_redacts_secrets() {
             "repository = \"other/repo\"",
         ),
         format!("unknown = \"private-token\"\n{input}"),
+        format!("{input}\nexclude_tags = [\"web-[\"]\n"),
+        format!("{input}\nexclude_tags = [\"private-token(\"]\n"),
     ] {
         std::fs::write(&path, invalid).unwrap();
         let error = Config::load(&path).err().unwrap();

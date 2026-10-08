@@ -18,7 +18,15 @@ TOML defines named `sources`, named `destinations`, and `[[routes]]`. Unknown fi
 
 A source has an explicit repository allowlist. Unauthorized repository events return 403. A ping is source-authenticated but need not contain a repository, which permits organization pings. Other events need an allowed `repository.full_name`. Non-release events and release actions other than `published` return 204 without creating jobs.
 
-Routes compare `repository.full_name` exactly and case-sensitively. A configured `tag_prefix` uses a case-sensitive prefix match. **Omit `tag_prefix` to include all releases from the repository.** Prereleases match only routes with `include_prereleases = true`. All matching routes contribute destinations; each destination receives one message even when routes overlap. An unmatched published release returns 202 with no jobs.
+Routes compare `repository.full_name` exactly and case-sensitively. A configured `tag_prefix` uses a case-sensitive prefix match. **Omit `tag_prefix` to match all repository tags, except excluded tags.** Prereleases match only routes with `include_prereleases = true`. All matching routes contribute destinations; each destination receives one message even when routes overlap. An unmatched published release returns 202 with no jobs.
+
+To exclude tags, add an `exclude_tags` list to a route:
+
+```toml
+exclude_tags = ["^actix-web-lab-derive-.*$"]
+```
+
+Patterns are case-insensitive regular expressions. A match anywhere in the tag excludes it; use `^` and `$` to match the complete tag. For example, the pattern above excludes both `actix-web-lab-derive-v0.1.0` and `ACTIX-WEB-LAB-DERIVE-v0.1.0`. See the [regex syntax](https://docs.rs/regex/latest/regex/#syntax) for more options. If any pattern matches, that route contributes no destinations, even if `tag_prefix` matches. Other routes can still announce the release. Omit `exclude_tags` or use `[]` to exclude no tags. Invalid regular expressions fail startup. Restart the service after changing the configuration.
 
 To add the third, fourth, or later repository, add its real `owner/name` to a source allowlist and add a route. Use a new source and secret if the hook needs a different trust boundary. Add named destinations to send to more channels, then list those destination names in routes. The example intentionally includes only the two known repositories.
 

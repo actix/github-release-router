@@ -19,14 +19,16 @@ webhook = { file = "/run/secrets/discord_webhook_url" }
 [[routes]]
 name = "actix-web"
 repository = "actix/actix-web"
-tag_prefix = "web-" # Optional. Remove this line to include all repository tags.
+tag_prefix = "web-" # Optional. Omit this line to match all tags before exclusions.
 include_prereleases = false
 destinations = ["web"]
 
 [[routes]]
 name = "actix-web-lab"
 repository = "robjtede/actix-web-lab"
-tag_prefix = "lab-" # Optional. Remove this line to include all repository tags.
+tag_prefix = "lab-" # Optional. Omit this line to match all tags before exclusions.
+# Optional. Exclude tags that match any of these case-insensitive regexes.
+# exclude_tags = ["^actix-web-lab-derive-.*$"]
 include_prereleases = false
 destinations = ["web"]
 

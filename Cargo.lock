@@ -974,6 +974,7 @@ dependencies = [
  "hex",
  "hmac",
  "rand",
+ "regex",
  "reqwest",
  "sentry",
  "serde",

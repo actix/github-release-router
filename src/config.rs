@@ -1,7 +1,8 @@
 use std::{collections::BTreeMap, path::Path};
 
 use anyhow::{Context as _, Result, bail, ensure};
-use serde::Deserialize;
+use regex::{Regex, RegexBuilder};
+use serde::{Deserialize, Deserializer, de::Error as _};
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -64,9 +65,26 @@ pub struct Route {
     pub name: String,
     pub repository: String,
     pub tag_prefix: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_tag_patterns")]
+    pub exclude_tags: Vec<Regex>,
     #[serde(default)]
     pub include_prereleases: bool,
     pub destinations: Vec<String>,
+}
+
+fn deserialize_tag_patterns<'de, D>(deserializer: D) -> Result<Vec<Regex>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Vec::<String>::deserialize(deserializer)?
+        .iter()
+        .map(|pattern| {
+            RegexBuilder::new(pattern)
+                .case_insensitive(true)
+                .build()
+                .map_err(D::Error::custom)
+        })
+        .collect()
 }
 
 fn repository_valid(name: &str) -> bool {
@@ -92,7 +110,7 @@ impl Config {
                     .count()
                     + 1
             });
-            anyhow::anyhow!("invalid configuration TOML or unknown field near line {line:?}; check config.example.toml")
+            anyhow::anyhow!("invalid configuration TOML, unknown field, or invalid tag regex near line {line:?}; check config.example.toml")
         })?;
         config.validate()?;
         Ok(config)

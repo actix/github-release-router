@@ -29,5 +29,6 @@ data:
     name = "actix-web-lab"
     repository = "robjtede/actix-web-lab"
     tag_prefix = "lab-"
+    # exclude_tags = ["^actix-web-lab-derive-.*$"]
     include_prereleases = false
     destinations = ["web"]

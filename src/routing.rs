@@ -15,6 +15,10 @@ pub fn destinations(
                 .tag_prefix
                 .as_ref()
                 .is_none_or(|prefix| release.tag_name.starts_with(prefix))
+            && !route
+                .exclude_tags
+                .iter()
+                .any(|pattern| pattern.is_match(&release.tag_name))
         {
             for destination in &route.destinations {
                 matches
