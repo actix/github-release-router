@@ -11,10 +11,11 @@ pub fn destinations(
     for route in &config.routes {
         if route.repository == repository
             && (!release.prerelease || route.include_prereleases)
-            && route
-                .tag_prefix
-                .as_ref()
-                .is_none_or(|prefix| release.tag_name.starts_with(prefix))
+            && (route.include_tags.is_empty()
+                || route
+                    .include_tags
+                    .iter()
+                    .any(|pattern| pattern.is_match(&release.tag_name)))
             && !route
                 .exclude_tags
                 .iter()

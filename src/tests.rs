@@ -47,7 +47,7 @@ fn config() -> Config {
         routes: vec![Route {
             name: "web".into(),
             repository: "actix/actix-web".into(),
-            tag_prefix: Some("web-".into()),
+            include_tags: vec![regex::Regex::new("(?i)^web-").unwrap()],
             exclude_tags: Vec::new(),
             include_prereleases: false,
             destinations: vec!["web".into()],
@@ -186,17 +186,23 @@ async fn incoming_filters_authorizes_limits_and_deduplicates() {
 }
 
 #[actix_web::test]
-async fn incoming_excludes_case_insensitive_regexes_before_queueing_announcements() {
+async fn incoming_applies_case_insensitive_tag_regexes_before_queueing_announcements() {
     for (tag, expected_job) in [
         ("actix-web-lab-derive-v0.1.0", false),
         ("actix-web-lab-derive-", false),
         ("actix-web-lab-v0.27.0-internal", false),
         ("actix-web-lab-v0.27.0-TEST", false),
         ("actix-web-lab-v0.27.0", true),
+        ("ACTIX-WEB-LAB-v0.27.0", true),
         ("actix-web-lab-Derive-v0.1.0", false),
         ("actix-web-lab-test-v0.1.0", true),
         ("actix-web-lab-v0.27.0-internal-more", true),
         ("other-actix-web-lab-v0.27.0", false),
+        ("lab-v0.27.0", true),
+        ("LAB-v0.27.0", true),
+        ("lab-v0.27.0-internal", false),
+        ("other-lab-v0.27.0", false),
+        ("web-v4.0.0", false),
     ] {
         let mut config = config();
         config.sources.get_mut("org").unwrap().repositories = vec!["robjtede/actix-web-lab".into()];
@@ -205,7 +211,7 @@ async fn incoming_excludes_case_insensitive_regexes_before_queueing_announcement
                 r#"
             name = "lab"
             repository = "robjtede/actix-web-lab"
-            tag_prefix = "actix-web-lab-"
+            include_tags = ["^actix-web-lab-", "^lab-v[0-9]+[.][0-9]+[.][0-9]+$"]
             exclude_tags = ["^actix-web-lab-derive-.*$", "-(internal|test)$"]
             destinations = ["web"]
             "#,
@@ -246,14 +252,15 @@ async fn incoming_excludes_case_insensitive_regexes_before_queueing_announcement
 }
 
 #[actix_web::test]
-async fn routes_apply_tag_exclusions_per_route() {
+async fn routes_apply_tag_filters_per_route() {
     let mut config = config();
-    config.routes[0].tag_prefix = None;
+    config.routes[0].include_tags.clear();
     config.routes.push(
         toml::from_str(
             r#"
             name = "filtered"
             repository = "actix/actix-web"
+            include_tags = ["lab", "^http-v"]
             exclude_tags = ["^actix-web-lab-derive-.*$"]
             destinations = ["web", "another"]
             "#,
@@ -262,12 +269,61 @@ async fn routes_apply_tag_exclusions_per_route() {
     );
 
     let mut release: github::Release = serde_json::from_value(event()["release"].clone()).unwrap();
-    release.tag_name = "ACTIX-WEB-LAB-DERIVE-v0.1.0".into();
 
-    assert_eq!(
-        routing::destinations(&config, "actix/actix-web", &release),
-        BTreeMap::from([("web".into(), vec!["web".into()])])
-    );
+    for (tag, expected_filtered) in [
+        ("ACTIX-WEB-LAB-DERIVE-v0.1.0", false),
+        ("ACTIX-WEB-LAB-v0.27.0", true),
+        ("HTTP-v3.0.0", true),
+        ("web-v4.0.0", false),
+    ] {
+        release.tag_name = tag.into();
+
+        let expected = if expected_filtered {
+            BTreeMap::from([
+                ("web".into(), vec!["web".into(), "filtered".into()]),
+                ("another".into(), vec!["filtered".into()]),
+            ])
+        } else {
+            BTreeMap::from([("web".into(), vec!["web".into()])])
+        };
+
+        assert_eq!(
+            routing::destinations(&config, "actix/actix-web", &release),
+            expected,
+            "{tag}"
+        );
+    }
+}
+
+#[actix_web::test]
+async fn routes_allow_all_tags_before_exclusions_when_inclusion_is_omitted_or_empty() {
+    let mut release: github::Release = serde_json::from_value(event()["release"].clone()).unwrap();
+
+    for inclusion in ["", "include_tags = []"] {
+        let mut config = config();
+        config.routes = vec![
+            toml::from_str(&format!(
+                r#"
+                name = "all"
+                repository = "actix/actix-web"
+                {inclusion}
+                exclude_tags = ["^private-"]
+                destinations = ["web"]
+                "#,
+            ))
+            .unwrap(),
+        ];
+
+        for (tag, expected_match) in [("unmatched-v1.0.0", true), ("private-v1.0.0", false)] {
+            release.tag_name = tag.into();
+
+            assert_eq!(
+                routing::destinations(&config, "actix/actix-web", &release).contains_key("web"),
+                expected_match,
+                "{inclusion}: {tag}"
+            );
+        }
+    }
 }
 
 #[actix_web::test]
@@ -276,7 +332,7 @@ async fn routes_union_destinations_and_include_prereleases_per_route() {
     config.routes.push(Route {
         name: "all".into(),
         repository: "actix/actix-web".into(),
-        tag_prefix: None,
+        include_tags: Vec::new(),
         exclude_tags: Vec::new(),
         include_prereleases: true,
         destinations: vec!["web".into(), "another".into()],
@@ -470,12 +526,14 @@ async fn config_validates_references_and_redacts_secrets() {
     let loaded = Config::load(&path).unwrap();
     assert_eq!(loaded.sources["org"].key, "test-secret");
     assert_eq!(loaded.bind, "0.0.0.0:8080");
-    assert_eq!(loaded.routes[0].tag_prefix, None);
+    assert!(loaded.routes[0].include_tags.is_empty());
     assert!(loaded.routes[0].exclude_tags.is_empty());
 
-    for patterns in ["[]", r#"["^web-derive-.*$", "-(internal|test)$"]"#] {
-        std::fs::write(&path, format!("{input}\nexclude_tags = {patterns}\n")).unwrap();
-        Config::load(&path).unwrap();
+    for field in ["include_tags", "exclude_tags"] {
+        for patterns in ["[]", r#"["^web-derive-.*$", "-(internal|test)$"]"#] {
+            std::fs::write(&path, format!("{input}\n{field} = {patterns}\n")).unwrap();
+            Config::load(&path).unwrap();
+        }
     }
 
     for invalid in [
@@ -486,6 +544,9 @@ async fn config_validates_references_and_redacts_secrets() {
             "repository = \"other/repo\"",
         ),
         format!("unknown = \"private-token\"\n{input}"),
+        format!("{input}\ntag_prefix = \"web-\"\n"),
+        format!("{input}\ninclude_tags = [\"web-[\"]\n"),
+        format!("{input}\ninclude_tags = [\"private-token(\"]\n"),
         format!("{input}\nexclude_tags = [\"web-[\"]\n"),
         format!("{input}\nexclude_tags = [\"private-token(\"]\n"),
     ] {
