@@ -21,14 +21,14 @@ data:
     [[routes]]
     name = "actix-web"
     repository = "actix/actix-web"
-    tag_prefix = "web-"
+    include_tags = ["^web-"]
     include_prereleases = false
     destinations = ["web"]
 
     [[routes]]
     name = "actix-web-lab"
     repository = "robjtede/actix-web-lab"
-    tag_prefix = "lab-"
+    include_tags = ["^lab-"]
     # exclude_tags = ["^actix-web-lab-derive-.*$"]
     include_prereleases = false
     destinations = ["web"]

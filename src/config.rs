@@ -64,7 +64,9 @@ pub struct Destination {
 pub struct Route {
     pub name: String,
     pub repository: String,
-    pub tag_prefix: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_tag_patterns")]
+    pub include_tags: Vec<Regex>,
+
     #[serde(default, deserialize_with = "deserialize_tag_patterns")]
     pub exclude_tags: Vec<Regex>,
     #[serde(default)]
