@@ -7,6 +7,10 @@ fmt-check:
 lint:
     cargo clippy --all-targets --locked -- -D warnings
 
+# Check security advisories.
+check-advisories:
+    cargo deny --log-level warn --workspace --all-features check advisories
+
 test:
     cargo test --locked
 
