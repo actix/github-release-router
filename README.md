@@ -96,7 +96,7 @@ The workflow uses the repository's `GITHUB_TOKEN` with package write permission.
 
 ## Kubernetes example
 
-The [`k8s/`](/Users/rob/Development/github-release-router/k8s/) directory contains example resources for a single-replica deployment. It needs no persistent volume, mounts the TOML configuration read-only, mounts credentials as files, runs as UID 10001, and exposes a ClusterIP service. `deployment.yaml` uses a placeholder image; replace it with the image published from your registry. `ingress.example.yaml` is an optional nginx example and must be adapted to the ingress controller and certificate manager in use.
+The [`k8s/`](k8s/) directory contains example resources for a single-replica deployment. It needs no persistent volume, mounts the TOML configuration read-only, mounts credentials as files, runs as UID 10001, and exposes a ClusterIP service. `deployment.yaml` uses a placeholder image; replace it with the image published from your registry. `ingress.example.yaml` is an optional nginx example and must be adapted to the ingress controller and certificate manager in use.
 
 Create the Secret without committing credentials. For example, use `k8s/secret.example.yaml` as a template or generate it with `kubectl create secret generic`; do not apply the placeholder values. The example Secret is deliberately excluded from `kustomization.yaml`. Then apply the Secret and base resources:
 
