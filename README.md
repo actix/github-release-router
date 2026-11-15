@@ -1,3 +1,5 @@
+![Comparison of a basic GitHub release notification and a release router announcement with release notes](assets/release-announcement-comparison.png)
+
 # GitHub release router
 
 Send GitHub release announcements to Discord. The service checks webhook signatures, routes releases by repository and tag, and retries failed deliveries. Each message includes the release title, link, and notes. Long notes are attached as a Markdown file.
