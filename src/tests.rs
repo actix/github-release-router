@@ -24,18 +24,18 @@ fn config() -> Config {
     Config {
         bind: "127.0.0.1:8080".into(),
         sources: BTreeMap::from([(
-            "org".into(),
+            "releases".into(),
             Source {
                 secret: Secret {
                     env: None,
                     file: None,
                 },
-                repositories: vec!["actix/actix-web".into()],
+                repositories: vec!["example/app".into()],
                 key: "test-secret".into(),
             },
         )]),
         destinations: BTreeMap::from([(
-            "web".into(),
+            "releases".into(),
             Destination {
                 webhook: Secret {
                     env: None,
@@ -45,12 +45,12 @@ fn config() -> Config {
             },
         )]),
         routes: vec![Route {
-            name: "web".into(),
-            repository: "actix/actix-web".into(),
-            include_tags: vec![regex::Regex::new("(?i)^web-").unwrap()],
+            name: "releases".into(),
+            repository: "example/app".into(),
+            include_tags: vec![regex::Regex::new("(?i)^v").unwrap()],
             exclude_tags: Vec::new(),
             include_prereleases: false,
-            destinations: vec!["web".into()],
+            destinations: vec!["releases".into()],
         }],
     }
 }
@@ -83,7 +83,7 @@ async fn signatures_cover_exact_bytes_and_chunked_payloads() {
             (None, false),
         ] {
             let mut builder = test::TestRequest::post()
-                .param("source", "org")
+                .param("source", "releases")
                 .insert_header(("content-type", "application/json"))
                 .app_data(Data::new(config()));
             if let Some(signature) = signature {
@@ -152,7 +152,7 @@ async fn incoming_filters_authorizes_limits_and_deduplicates() {
     ] {
         let body = value.to_string();
         let request = test::TestRequest::post()
-            .uri("/webhooks/github/org")
+            .uri("/webhooks/github/releases")
             .insert_header(("content-type", "application/json"))
             .insert_header(("x-hub-signature-256", sign(body.as_bytes())))
             .insert_header(("x-github-delivery", id))
@@ -169,7 +169,7 @@ async fn incoming_filters_authorizes_limits_and_deduplicates() {
     assert!(queue.claim().await.is_none());
     let huge = json!({"body": "x".repeat(github::MAX_BODY)}).to_string();
     let request = test::TestRequest::post()
-        .uri("/webhooks/github/org")
+        .uri("/webhooks/github/releases")
         .insert_header(("content-type", "application/json"))
         .insert_header(("x-hub-signature-256", sign(huge.as_bytes())))
         .set_payload(huge)
@@ -188,32 +188,32 @@ async fn incoming_filters_authorizes_limits_and_deduplicates() {
 #[actix_web::test]
 async fn incoming_applies_case_insensitive_tag_regexes_before_queueing_announcements() {
     for (tag, expected_job) in [
-        ("actix-web-lab-derive-v0.1.0", false),
-        ("actix-web-lab-derive-", false),
-        ("actix-web-lab-v0.27.0-internal", false),
-        ("actix-web-lab-v0.27.0-TEST", false),
-        ("actix-web-lab-v0.27.0", true),
-        ("ACTIX-WEB-LAB-v0.27.0", true),
-        ("actix-web-lab-Derive-v0.1.0", false),
-        ("actix-web-lab-test-v0.1.0", true),
-        ("actix-web-lab-v0.27.0-internal-more", true),
-        ("other-actix-web-lab-v0.27.0", false),
-        ("lab-v0.27.0", true),
-        ("LAB-v0.27.0", true),
-        ("lab-v0.27.0-internal", false),
-        ("other-lab-v0.27.0", false),
-        ("web-v4.0.0", false),
+        ("toolkit-derive-v0.1.0", false),
+        ("toolkit-derive-", false),
+        ("toolkit-v0.27.0-internal", false),
+        ("toolkit-v0.27.0-TEST", false),
+        ("toolkit-v0.27.0", true),
+        ("TOOLKIT-v0.27.0", true),
+        ("toolkit-Derive-v0.1.0", false),
+        ("toolkit-test-v0.1.0", true),
+        ("toolkit-v0.27.0-internal-more", true),
+        ("other-toolkit-v0.27.0", false),
+        ("sdk-v0.27.0", true),
+        ("SDK-v0.27.0", true),
+        ("sdk-v0.27.0-internal", false),
+        ("other-sdk-v0.27.0", false),
+        ("v1.0.0", false),
     ] {
         let mut config = config();
-        config.sources.get_mut("org").unwrap().repositories = vec!["robjtede/actix-web-lab".into()];
+        config.sources.get_mut("releases").unwrap().repositories = vec!["example/toolkit".into()];
         config.routes = vec![
             toml::from_str(
                 r#"
-            name = "lab"
-            repository = "robjtede/actix-web-lab"
-            include_tags = ["^actix-web-lab-", "^lab-v[0-9]+[.][0-9]+[.][0-9]+$"]
-            exclude_tags = ["^actix-web-lab-derive-.*$", "-(internal|test)$"]
-            destinations = ["web"]
+            name = "toolkit"
+            repository = "example/toolkit"
+            include_tags = ["^toolkit-", "^sdk-v[0-9]+[.][0-9]+[.][0-9]+$"]
+            exclude_tags = ["^toolkit-derive-.*$", "-(internal|test)$"]
+            destinations = ["releases"]
             "#,
             )
             .unwrap(),
@@ -229,11 +229,11 @@ async fn incoming_applies_case_insensitive_tag_regexes_before_queueing_announcem
         .await;
 
         let mut value = event();
-        value["repository"]["full_name"] = json!("robjtede/actix-web-lab");
+        value["repository"]["full_name"] = json!("example/toolkit");
         value["release"]["tag_name"] = json!(tag);
         let body = value.to_string();
         let request = test::TestRequest::post()
-            .uri("/webhooks/github/org")
+            .uri("/webhooks/github/releases")
             .insert_header(("content-type", "application/json"))
             .insert_header(("x-hub-signature-256", sign(body.as_bytes())))
             .insert_header(("x-github-delivery", "tag-filter"))
@@ -259,10 +259,10 @@ async fn routes_apply_tag_filters_per_route() {
         toml::from_str(
             r#"
             name = "filtered"
-            repository = "actix/actix-web"
-            include_tags = ["lab", "^http-v"]
-            exclude_tags = ["^actix-web-lab-derive-.*$"]
-            destinations = ["web", "another"]
+            repository = "example/app"
+            include_tags = ["toolkit", "^http-v"]
+            exclude_tags = ["^toolkit-derive-.*$"]
+            destinations = ["releases", "another"]
             "#,
         )
         .unwrap(),
@@ -271,24 +271,27 @@ async fn routes_apply_tag_filters_per_route() {
     let mut release: github::Release = serde_json::from_value(event()["release"].clone()).unwrap();
 
     for (tag, expected_filtered) in [
-        ("ACTIX-WEB-LAB-DERIVE-v0.1.0", false),
-        ("ACTIX-WEB-LAB-v0.27.0", true),
+        ("TOOLKIT-DERIVE-v0.1.0", false),
+        ("TOOLKIT-v0.27.0", true),
         ("HTTP-v3.0.0", true),
-        ("web-v4.0.0", false),
+        ("v1.0.0", false),
     ] {
         release.tag_name = tag.into();
 
         let expected = if expected_filtered {
             BTreeMap::from([
-                ("web".into(), vec!["web".into(), "filtered".into()]),
+                (
+                    "releases".into(),
+                    vec!["releases".into(), "filtered".into()],
+                ),
                 ("another".into(), vec!["filtered".into()]),
             ])
         } else {
-            BTreeMap::from([("web".into(), vec!["web".into()])])
+            BTreeMap::from([("releases".into(), vec!["releases".into()])])
         };
 
         assert_eq!(
-            routing::destinations(&config, "actix/actix-web", &release),
+            routing::destinations(&config, "example/app", &release),
             expected,
             "{tag}"
         );
@@ -305,10 +308,10 @@ async fn routes_allow_all_tags_before_exclusions_when_inclusion_is_omitted_or_em
             toml::from_str(&format!(
                 r#"
                 name = "all"
-                repository = "actix/actix-web"
+                repository = "example/app"
                 {inclusion}
                 exclude_tags = ["^private-"]
-                destinations = ["web"]
+                destinations = ["releases"]
                 "#,
             ))
             .unwrap(),
@@ -318,7 +321,7 @@ async fn routes_allow_all_tags_before_exclusions_when_inclusion_is_omitted_or_em
             release.tag_name = tag.into();
 
             assert_eq!(
-                routing::destinations(&config, "actix/actix-web", &release).contains_key("web"),
+                routing::destinations(&config, "example/app", &release).contains_key("releases"),
                 expected_match,
                 "{inclusion}: {tag}"
             );
@@ -331,42 +334,42 @@ async fn routes_union_destinations_and_include_prereleases_per_route() {
     let mut config = config();
     config.routes.push(Route {
         name: "all".into(),
-        repository: "actix/actix-web".into(),
+        repository: "example/app".into(),
         include_tags: Vec::new(),
         exclude_tags: Vec::new(),
         include_prereleases: true,
-        destinations: vec!["web".into(), "another".into()],
+        destinations: vec!["releases".into(), "another".into()],
     });
     let mut release: github::Release = serde_json::from_value(event()["release"].clone()).unwrap();
-    let matched = routing::destinations(&config, "actix/actix-web", &release);
+    let matched = routing::destinations(&config, "example/app", &release);
     assert_eq!(matched.len(), 2);
-    assert_eq!(matched["web"], ["web", "all"]);
+    assert_eq!(matched["releases"], ["releases", "all"]);
     release.prerelease = true;
     assert_eq!(
-        routing::destinations(&config, "actix/actix-web", &release)["web"],
+        routing::destinations(&config, "example/app", &release)["releases"],
         ["all"]
     );
     release.tag_name = "unprefixed".into();
     assert_eq!(
-        routing::destinations(&config, "actix/actix-web", &release).len(),
+        routing::destinations(&config, "example/app", &release).len(),
         2
     );
-    assert!(routing::destinations(&config, "actix/other", &release).is_empty());
+    assert!(routing::destinations(&config, "example/other", &release).is_empty());
 }
 
 #[actix_web::test]
 async fn embed_title_uses_only_the_release_name_and_links_to_the_release() {
     let mut release: github::Release = serde_json::from_value(event()["release"].clone()).unwrap();
 
-    let message = discord::render("actix/actix-web", &release);
+    let message = discord::render("example/app", &release);
     let embed = &message.payload["embeds"][0];
-    assert_eq!(embed["title"], "Actix Web 4.0.0");
+    assert_eq!(embed["title"], "App 1.0.0");
     assert_eq!(embed["url"], release.html_url);
     assert!(embed.get("timestamp").is_none());
 
     release.name = None;
-    let message = discord::render("actix/actix-web", &release);
-    assert_eq!(message.payload["embeds"][0]["title"], "web-v4.0.0");
+    let message = discord::render("example/app", &release);
+    assert_eq!(message.payload["embeds"][0]["title"], "v1.0.0");
 }
 
 #[actix_web::test]
@@ -452,7 +455,7 @@ async fn fake_discord_checks_payload_attachments_and_failure_classes() {
     actix_web::rt::spawn(server);
     let client = worker::client().unwrap();
     let mut release: github::Release = serde_json::from_value(event()["release"].clone()).unwrap();
-    let message = discord::render("actix/actix-web", &release);
+    let message = discord::render("example/app", &release);
     for path in ["ok", "limited", "transient", "permanent", "unconfirmed"] {
         let outcome = worker::send(&client, &format!("http://{address}/{path}"), &message, 1).await;
         assert!(match path {
@@ -476,7 +479,7 @@ async fn fake_discord_checks_payload_attachments_and_failure_classes() {
         });
     }
     release.body = Some("🚀\n".repeat(3000));
-    let long = discord::render("actix/actix-web", &release);
+    let long = discord::render("example/app", &release);
     assert!(matches!(
         worker::send(&client, &format!("http://{address}/upload"), &long, 1).await,
         worker::Outcome::Sent
@@ -508,15 +511,15 @@ async fn config_validates_references_and_redacts_secrets() {
     .unwrap();
     let input = format!(
         r#"
-        [sources.org]
-        repositories = ["actix/actix-web"]
+        [sources.releases]
+        repositories = ["example/app"]
         secret = {{ file = {:?} }}
-        [destinations.web]
+        [destinations.releases]
         webhook = {{ file = {:?} }}
         [[routes]]
-        name = "web"
-        repository = "actix/actix-web"
-        destinations = ["web"]
+        name = "releases"
+        repository = "example/app"
+        destinations = ["releases"]
     "#,
         key.to_str().unwrap(),
         hook.to_str().unwrap()
@@ -524,30 +527,33 @@ async fn config_validates_references_and_redacts_secrets() {
     let path = dir.path().join("config.toml");
     std::fs::write(&path, &input).unwrap();
     let loaded = Config::load(&path).unwrap();
-    assert_eq!(loaded.sources["org"].key, "test-secret");
+    assert_eq!(loaded.sources["releases"].key, "test-secret");
     assert_eq!(loaded.bind, "0.0.0.0:8080");
     assert!(loaded.routes[0].include_tags.is_empty());
     assert!(loaded.routes[0].exclude_tags.is_empty());
 
     for field in ["include_tags", "exclude_tags"] {
-        for patterns in ["[]", r#"["^web-derive-.*$", "-(internal|test)$"]"#] {
+        for patterns in ["[]", r#"["^app-derive-.*$", "-(internal|test)$"]"#] {
             std::fs::write(&path, format!("{input}\n{field} = {patterns}\n")).unwrap();
             Config::load(&path).unwrap();
         }
     }
 
     for invalid in [
-        input.replace("destinations = [\"web\"]", "destinations = [\"missing\"]"),
-        input.replace("name = \"web\"", "name = \"\""),
         input.replace(
-            "repository = \"actix/actix-web\"",
+            "destinations = [\"releases\"]",
+            "destinations = [\"missing\"]",
+        ),
+        input.replace("name = \"releases\"", "name = \"\""),
+        input.replace(
+            "repository = \"example/app\"",
             "repository = \"other/repo\"",
         ),
         format!("unknown = \"private-token\"\n{input}"),
-        format!("{input}\ntag_prefix = \"web-\"\n"),
-        format!("{input}\ninclude_tags = [\"web-[\"]\n"),
+        format!("{input}\ntag_prefix = \"app-\"\n"),
+        format!("{input}\ninclude_tags = [\"app-[\"]\n"),
         format!("{input}\ninclude_tags = [\"private-token(\"]\n"),
-        format!("{input}\nexclude_tags = [\"web-[\"]\n"),
+        format!("{input}\nexclude_tags = [\"app-[\"]\n"),
         format!("{input}\nexclude_tags = [\"private-token(\"]\n"),
     ] {
         std::fs::write(&path, invalid).unwrap();
@@ -612,16 +618,16 @@ async fn worker_retries_fake_discord_and_finishes_active_send_on_shutdown() {
     actix_web::rt::spawn(server);
     let queue = Queue::default();
     let mut config = config();
-    config.destinations.get_mut("web").unwrap().url = format!("http://{address}/webhook");
+    config.destinations.get_mut("releases").unwrap().url = format!("http://{address}/webhook");
     let config = Arc::new(config);
     let release = serde_json::from_value(event()["release"].clone()).unwrap();
     queue
         .enqueue(
             "worker-test",
-            "actix/actix-web",
+            "example/app",
             123,
-            &routing::destinations(&config, "actix/actix-web", &release),
-            &discord::render("actix/actix-web", &release),
+            &routing::destinations(&config, "example/app", &release),
+            &discord::render("example/app", &release),
         )
         .await
         .unwrap();
@@ -666,7 +672,7 @@ async fn chunked_size_limit_and_ambiguous_signature_headers_are_rejected() {
         ),
     ] {
         let mut builder = test::TestRequest::post()
-            .param("source", "org")
+            .param("source", "releases")
             .insert_header(("content-type", "application/json"))
             .app_data(Data::new(config()));
         for header in headers {
@@ -686,7 +692,7 @@ async fn chunked_size_limit_and_ambiguous_signature_headers_are_rejected() {
     }
 
     let request = test::TestRequest::post()
-        .param("source", "org")
+        .param("source", "releases")
         .insert_header(("content-type", "application/json"))
         .insert_header(("x-hub-signature-256", sign(body)))
         .app_data(Data::new(config()))
@@ -716,11 +722,11 @@ async fn chunked_size_limit_and_ambiguous_signature_headers_are_rejected() {
 async fn queue_deduplicates_retries_and_resets_on_restart() {
     let queue = Queue::default();
     let release = serde_json::from_value(event()["release"].clone()).unwrap();
-    let message = discord::render("actix/actix-web", &release);
-    let destinations = routing::destinations(&config(), "actix/actix-web", &release);
+    let message = discord::render("example/app", &release);
+    let destinations = routing::destinations(&config(), "example/app", &release);
     assert_eq!(
         queue
-            .enqueue("first", "actix/actix-web", 123, &destinations, &message)
+            .enqueue("first", "example/app", 123, &destinations, &message)
             .await
             .unwrap()
             .jobs_inserted,
@@ -728,7 +734,7 @@ async fn queue_deduplicates_retries_and_resets_on_restart() {
     );
     assert!(
         !queue
-            .enqueue("first", "actix/actix-web", 123, &destinations, &message)
+            .enqueue("first", "example/app", 123, &destinations, &message)
             .await
             .unwrap()
             .delivery_inserted
@@ -738,7 +744,7 @@ async fn queue_deduplicates_retries_and_resets_on_restart() {
     assert!(queue.claim().await.is_none());
     assert_eq!(
         queue
-            .enqueue("second", "actix/actix-web", 123, &destinations, &message)
+            .enqueue("second", "example/app", 123, &destinations, &message)
             .await
             .unwrap()
             .jobs_inserted,
@@ -746,7 +752,7 @@ async fn queue_deduplicates_retries_and_resets_on_restart() {
     );
     queue.finish(job, true, 10, false, true).await;
     queue
-        .enqueue("other", "actix/actix-web", 124, &destinations, &message)
+        .enqueue("other", "example/app", 124, &destinations, &message)
         .await
         .unwrap();
     assert!(queue.claim().await.is_none());
@@ -759,7 +765,7 @@ async fn queue_deduplicates_retries_and_resets_on_restart() {
     queue.finish(retry, false, 0, true, false).await;
     assert_eq!(
         queue
-            .enqueue("third", "actix/actix-web", 123, &destinations, &message)
+            .enqueue("third", "example/app", 123, &destinations, &message)
             .await
             .unwrap()
             .jobs_inserted,
@@ -770,7 +776,7 @@ async fn queue_deduplicates_retries_and_resets_on_restart() {
     assert!(restarted.claim().await.is_none());
     assert_eq!(
         restarted
-            .enqueue("first", "actix/actix-web", 123, &destinations, &message)
+            .enqueue("first", "example/app", 123, &destinations, &message)
             .await
             .unwrap()
             .jobs_inserted,
@@ -780,7 +786,7 @@ async fn queue_deduplicates_retries_and_resets_on_restart() {
     tokio::time::advance(std::time::Duration::from_secs(30 * 24 * 60 * 60)).await;
     assert_eq!(
         queue
-            .enqueue("first", "actix/actix-web", 123, &destinations, &message)
+            .enqueue("first", "example/app", 123, &destinations, &message)
             .await
             .unwrap()
             .jobs_inserted,
@@ -792,13 +798,13 @@ async fn queue_deduplicates_retries_and_resets_on_restart() {
 async fn full_queue_rejects_atomically_and_failed_jobs_allow_redelivery() {
     let queue = Queue::default();
     let release = serde_json::from_value(event()["release"].clone()).unwrap();
-    let message = discord::render("actix/actix-web", &release);
-    let destinations = routing::destinations(&config(), "actix/actix-web", &release);
+    let message = discord::render("example/app", &release);
+    let destinations = routing::destinations(&config(), "example/app", &release);
     for id in 0..63 {
         queue
             .enqueue(
                 &format!("fill-{id}"),
-                "actix/actix-web",
+                "example/app",
                 id,
                 &destinations,
                 &message,
@@ -806,9 +812,9 @@ async fn full_queue_rejects_atomically_and_failed_jobs_allow_redelivery() {
             .await
             .unwrap();
     }
-    let two = BTreeMap::from([("web".into(), vec![]), ("other".into(), vec![])]);
+    let two = BTreeMap::from([("releases".into(), vec![]), ("other".into(), vec![])]);
     let error = queue
-        .enqueue("overflow", "actix/actix-web", 100, &two, &message)
+        .enqueue("overflow", "example/app", 100, &two, &message)
         .await
         .err()
         .unwrap();
@@ -817,14 +823,14 @@ async fn full_queue_rejects_atomically_and_failed_jobs_allow_redelivery() {
     // An in-flight job still consumes capacity.
     assert!(
         queue
-            .enqueue("overflow", "actix/actix-web", 100, &two, &message)
+            .enqueue("overflow", "example/app", 100, &two, &message)
             .await
             .is_err()
     );
     queue.finish(job, false, 0, false, false).await;
     assert_eq!(
         queue
-            .enqueue("overflow", "actix/actix-web", 100, &two, &message)
+            .enqueue("overflow", "example/app", 100, &two, &message)
             .await
             .unwrap()
             .jobs_inserted,
@@ -835,7 +841,7 @@ async fn full_queue_rejects_atomically_and_failed_jobs_allow_redelivery() {
     queue.finish(job, false, 0, false, false).await;
     assert_eq!(
         queue
-            .enqueue(&delivery, "actix/actix-web", 1, &destinations, &message)
+            .enqueue(&delivery, "example/app", 1, &destinations, &message)
             .await
             .unwrap()
             .jobs_inserted,
@@ -847,13 +853,13 @@ async fn full_queue_rejects_atomically_and_failed_jobs_allow_redelivery() {
 async fn full_queue_returns_503_and_accepts_the_same_delivery_after_capacity_frees() {
     let queue = Queue::default();
     let release = serde_json::from_value(event()["release"].clone()).unwrap();
-    let message = discord::render("actix/actix-web", &release);
-    let destinations = routing::destinations(&config(), "actix/actix-web", &release);
+    let message = discord::render("example/app", &release);
+    let destinations = routing::destinations(&config(), "example/app", &release);
     for id in 0..64 {
         queue
             .enqueue(
                 &format!("fill-{id}"),
-                "actix/actix-web",
+                "example/app",
                 id,
                 &destinations,
                 &message,
@@ -872,7 +878,7 @@ async fn full_queue_returns_503_and_accepts_the_same_delivery_after_capacity_fre
     for expected in [503, 202] {
         let body = event().to_string();
         let request = test::TestRequest::post()
-            .uri("/webhooks/github/org")
+            .uri("/webhooks/github/releases")
             .insert_header(("content-type", "application/json"))
             .insert_header(("x-hub-signature-256", sign(body.as_bytes())))
             .insert_header(("x-github-delivery", "overflow"))
@@ -899,11 +905,11 @@ async fn full_queue_returns_503_and_accepts_the_same_delivery_after_capacity_fre
 async fn redelivery_retries_only_failed_destinations() {
     let queue = Queue::default();
     let release = serde_json::from_value(event()["release"].clone()).unwrap();
-    let message = discord::render("actix/actix-web", &release);
+    let message = discord::render("example/app", &release);
     let destinations = BTreeMap::from([("a".into(), vec![]), ("b".into(), vec![])]);
     let (first, duplicate) = tokio::join!(
-        queue.enqueue("delivery", "actix/actix-web", 123, &destinations, &message),
-        queue.enqueue("delivery", "actix/actix-web", 123, &destinations, &message),
+        queue.enqueue("delivery", "example/app", 123, &destinations, &message),
+        queue.enqueue("delivery", "example/app", 123, &destinations, &message),
     );
     assert_eq!(
         first.unwrap().jobs_inserted + duplicate.unwrap().jobs_inserted,
@@ -916,7 +922,7 @@ async fn redelivery_retries_only_failed_destinations() {
     queue.finish(failed, false, 0, false, false).await;
     assert_eq!(
         queue
-            .enqueue("delivery", "actix/actix-web", 123, &destinations, &message)
+            .enqueue("delivery", "example/app", 123, &destinations, &message)
             .await
             .unwrap()
             .jobs_inserted,

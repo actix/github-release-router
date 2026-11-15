@@ -5,6 +5,7 @@ services:
     restart: unless-stopped
     init: true
     environment:
+      RUST_LOG: ${RUST_LOG:-github_release_router=info}
       SENTRY_DSN: ${SENTRY_DSN:-}
       SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-production}
     read_only: true
@@ -15,15 +16,12 @@ services:
     volumes:
       - ./config.toml:/etc/router/config.toml:ro
     secrets:
-      - actix_github_secret
-      - personal_github_secret
+      - github_webhook_secret
       - discord_webhook_url
     stop_grace_period: 75s
 
 secrets:
-  actix_github_secret:
-    file: ./secrets/actix_github_secret
-  personal_github_secret:
-    file: ./secrets/personal_github_secret
+  github_webhook_secret:
+    file: ./secrets/github_webhook_secret
   discord_webhook_url:
     file: ./secrets/discord_webhook_url

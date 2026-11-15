@@ -1,11 +1,11 @@
 {
   "action": "published",
-  "repository": { "full_name": "actix/actix-web" },
+  "repository": { "full_name": "example/app" },
   "release": {
     "id": 123456,
-    "tag_name": "web-v4.0.0",
-    "name": "Actix Web 4.0.0",
-    "html_url": "https://github.com/actix/actix-web/releases/tag/web-v4.0.0",
+    "tag_name": "v1.0.0",
+    "name": "App 1.0.0",
+    "html_url": "https://github.com/example/app/releases/tag/v1.0.0",
     "published_at": "2026-09-24T10:00:00Z",
     "prerelease": false,
     "body": "## Changes\n\n- Improve request handling.\n- Fix an edge case.\n\nThank you to all contributors!"
