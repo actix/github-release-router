@@ -1,38 +1,24 @@
 bind = "0.0.0.0:8080"
 
-# A repository hook and an organization hook use the same endpoint format.
-# Configure each hook with the secret for its named source.
-[sources.actix]
-repositories = ["actix/actix-web"]
-secret = { file = "/run/secrets/actix_github_secret" }
+# Replace example/app in both the allowlist and the route below.
+# Configure GitHub to send releases to /webhooks/github/releases.
+[sources.releases]
+repositories = ["example/app"]
+secret = { file = "/run/secrets/github_webhook_secret" }
+# Alternative: secret = { env = "GITHUB_WEBHOOK_SECRET" }
 
-[sources.personal]
-repositories = ["robjtede/actix-web-lab"]
-secret = { file = "/run/secrets/personal_github_secret" }
-
-# This URL must belong to #web in server 771444961383153695.
-# The server/channel IDs are not API parameters for incoming webhook delivery.
-[destinations.web]
+[destinations.releases]
 webhook = { file = "/run/secrets/discord_webhook_url" }
 # Alternative: webhook = { env = "DISCORD_WEBHOOK_URL" }
 
 [[routes]]
-name = "actix-web"
-repository = "actix/actix-web"
-# Optional. Match any of these case-insensitive regexes.
-include_tags = ["^web-"] # Omit or use [] to match all tags before exclusions.
-include_prereleases = false
-destinations = ["web"]
+name = "app-releases"
+repository = "example/app"
+destinations = ["releases"]
 
-[[routes]]
-name = "actix-web-lab"
-repository = "robjtede/actix-web-lab"
-# Optional. Match any of these case-insensitive regexes.
-include_tags = ["^lab-"] # Omit or use [] to match all tags before exclusions.
-# Optional. Exclude tags that match any of these case-insensitive regexes.
-# exclude_tags = ["^actix-web-lab-derive-.*$"]
-include_prereleases = false
-destinations = ["web"]
+# Optional. Prereleases are excluded by default.
+# include_prereleases = true
 
-# Add the other repository names to a source allowlist and add a route for each.
-# There is no two-repository limit; four or more use the same configuration.
+# Optional. All tags are allowed by default. Patterns are case-insensitive regexes.
+# include_tags = ["^v[0-9]+[.][0-9]+[.][0-9]+$"]
+# exclude_tags = ["-(internal|test)$"]

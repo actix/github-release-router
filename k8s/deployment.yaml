@@ -26,8 +26,8 @@ spec:
           type: RuntimeDefault
       containers:
         - name: router
-          image: ghcr.io/replace-me/github-release-router:latest
-          imagePullPolicy: IfNotPresent
+          image: ghcr.io/replace-me/github-release-router:stable
+          imagePullPolicy: Always
           args: ["--config", "/etc/router/config.toml", "serve"]
           ports:
             - name: http

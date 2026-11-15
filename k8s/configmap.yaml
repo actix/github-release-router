@@ -7,28 +7,14 @@ data:
   config.toml: |
     bind = "0.0.0.0:8080"
 
-    [sources.actix]
-    repositories = ["actix/actix-web"]
-    secret = { file = "/run/secrets/actix_github_secret" }
+    [sources.releases]
+    repositories = ["example/app"]
+    secret = { file = "/run/secrets/github_webhook_secret" }
 
-    [sources.personal]
-    repositories = ["robjtede/actix-web-lab"]
-    secret = { file = "/run/secrets/personal_github_secret" }
-
-    [destinations.web]
+    [destinations.releases]
     webhook = { file = "/run/secrets/discord_webhook_url" }
 
     [[routes]]
-    name = "actix-web"
-    repository = "actix/actix-web"
-    include_tags = ["^web-"]
-    include_prereleases = false
-    destinations = ["web"]
-
-    [[routes]]
-    name = "actix-web-lab"
-    repository = "robjtede/actix-web-lab"
-    include_tags = ["^lab-"]
-    # exclude_tags = ["^actix-web-lab-derive-.*$"]
-    include_prereleases = false
-    destinations = ["web"]
+    name = "app-releases"
+    repository = "example/app"
+    destinations = ["releases"]

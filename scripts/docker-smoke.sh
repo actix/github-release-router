@@ -14,14 +14,14 @@ chmod 755 "$smoke_dir"
 cp examples/release.json "$smoke_dir/release.json"
 cat > "$smoke_dir/config.toml" <<'CONFIG'
 [sources.test]
-repositories = ["actix/actix-web"]
+repositories = ["example/app"]
 secret = { env = "TEST_GITHUB_SECRET" }
-[destinations.web]
+[destinations.releases]
 webhook = { env = "TEST_DISCORD_URL" }
 [[routes]]
 name = "smoke"
-repository = "actix/actix-web"
-destinations = ["web"]
+repository = "example/app"
+destinations = ["releases"]
 CONFIG
 chmod 644 "$smoke_dir"/*
 signature=$(openssl dgst -sha256 -hmac test-secret "$smoke_dir/release.json" | awk '{print $NF}')

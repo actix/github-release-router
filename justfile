@@ -24,7 +24,7 @@ container-build:
     docker build -t github-release-router:local .
 
 container-run:
-    docker compose up --build -d
+    docker compose up --build -d --wait
 
 # Requires Docker, OpenSSL, and ripgrep. Uses no external network.
 container-smoke image="github-release-router:local":
